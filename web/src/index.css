@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Petopia tokens (spec sec 9.1): Synapse's dark base and gold chrome (serenity/src/styles/synapse-tokens.css), plus
+   Petopia's own deep moss green -- taken from the hero wordmark -- for "healthy / on track". Amber = due soon,
+   a calm red only for overdue / urgent. Light theme from the same roles. */
+:root {
+  --bg: #04080D;
+  --bg-2: #08111B;
+  --surface: #0B1520;
+  --surface-2: #101C29;
+  --line: rgba(243, 233, 211, .10);
+  --line-strong: rgba(243, 233, 211, .20);
+  --text: #F3E9D3;
+  --text-2: #B9AB89;
+  --gold: #E3BB63;
+  --gold-soft: rgba(227, 187, 99, .14);
+  --moss: #8DB678;
+  --moss-deep: #24452C;
+  --moss-soft: rgba(141, 182, 120, .14);
+  --amber: #E5A84B;
+  --red: #D9695F;
+  --on-gold: #1B1405;
+  --shadow: 0 18px 48px rgba(0, 0, 0, .35);
+  --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #F6F2E9;
+    --bg-2: #EFE8DA;
+    --surface: #FFFFFF;
+    --surface-2: #FAF7F0;
+    --line: rgba(28, 36, 32, .10);
+    --line-strong: rgba(28, 36, 32, .20);
+    --text: #1A2420;
+    --text-2: #5D675F;
+    --gold: #9C7524;
+    --gold-soft: rgba(156, 117, 36, .12);
+    --moss: #2F6B3A;
+    --moss-deep: #D6E6CF;
+    --moss-soft: rgba(47, 107, 58, .10);
+    --amber: #A86A12;
+    --red: #B23F35;
+    --on-gold: #FFFFFF;
+    --shadow: 0 14px 36px rgba(40, 32, 12, .12);
+    color-scheme: light;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-moss: var(--moss);
+  --color-moss-deep: var(--moss-deep);
+  --color-moss-soft: var(--moss-soft);
+  --color-amber: var(--amber);
+  --color-red: var(--red);
+  --color-on-gold: var(--on-gold);
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-display);
+}
+
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font-family: var(--font-ui); font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
+.name { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.015em; font-optical-sizing: auto; }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+input, select, textarea { font: inherit; color: var(--text); }
+.field { width: 100%; box-sizing: border-box; min-height: 48px; padding: 10px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line-strong); }
+.field::placeholder { color: var(--text-2); opacity: .7; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 18px; border-radius: 999px; font-weight: 600; font-size: 15px; border: 1px solid var(--line-strong); background: transparent; color: var(--text); cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.seg { display: inline-flex; padding: 4px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.seg button { min-height: 40px; padding: 0 18px; border-radius: 999px; border: 0; background: transparent; color: var(--text-2); font: inherit; font-weight: 600; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 0 var(--line-strong) inset, 0 2px 8px rgba(0,0,0,.18); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

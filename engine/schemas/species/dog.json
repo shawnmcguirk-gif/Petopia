@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/species/dog/1",
+  "title": "Dog extension (Petopia D1 sec 3.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "coat_type": { "type": "string", "enum": ["SHORT", "MEDIUM", "LONG", "WIRE", "CURLY", "DOUBLE", "HAIRLESS"] },
+    "walk_minutes_target": { "type": "integer", "minimum": 0, "maximum": 600 },
+    "kennel_club_reg": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}

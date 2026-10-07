@@ -3,3 +3,10 @@
 .oversight/outbox/*
 !.oversight/outbox/done/
 !.oversight/packs/
+
+# engine / web build outputs and secrets (as Vitalis)
+node_modules/
+dist/
+.env
+.DS_Store
+*.timestamp-*.mjs

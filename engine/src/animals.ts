@@ -1,0 +1,229 @@
+// Animals (spec sec 3.3, 9.3, 9.4; A6). Every function runs inside a transaction that has already chosen the household
+// (FORCE RLS), and checks the caller's role on the animal first (access.ts). Age is computed, never stored.
+import { sql } from 'kysely';
+import { requireOn, roleOn, setFirstOwner, allowedActions, type Role, type Action } from './access.js';
+import { ageOf, formatVagueDate, parseVagueDate, todayIso, type Age, type Precision } from './age.js';
+import { kdb, type Client } from './db.js';
+import { bad, notFound } from './errors.js';
+import { assertExt, type SpeciesModule } from './species.js';
+import { processPhoto, storePhoto, type Processed } from './photos.js';
+
+const SEX = ['FEMALE', 'MALE', 'UNKNOWN'] as const;
+const NEUTER = ['NEUTERED', 'ENTIRE', 'UNKNOWN'] as const;
+const STATUS = ['ACTIVE', 'REHOMED', 'DECEASED'] as const;
+const KIND = ['PET', 'CARED_FOR'] as const;
+const HEALTH = ['HEALTHY', 'UNDER_TREATMENT', 'NEEDS_ATTENTION'] as const;
+
+export interface AnimalView {
+  id: number;
+  name: string;
+  nickname: string | null;
+  species: string;
+  module: string;
+  breed: string | null;
+  sex: string;
+  neuter_status: string;
+  colour_markings: string | null;
+  born: string | null; // as typed: "2018", "2018-03", "2018-03-14"
+  born_precision: Precision;
+  age: Age | null;
+  acquired: string | null;
+  acquired_precision: Precision;
+  microchip: string | null;
+  registration: string | null;
+  source: string | null;
+  habitat: string | null;
+  kind: string;
+  status: string;
+  status_on: string | null;
+  /** Set by a person (Owner / Primary carer); null until someone does. Never computed (sec 9.3). */
+  health_status: string | null;
+  /** S3 fills this from the latest CONFIRMED weight; null until then, and the UI hides it. */
+  latest_weight: { kg: string; on: string } | null;
+  photo: string | null; // "api/media/<sha>.jpg", relative to the app's base
+  ext: Record<string, unknown>;
+  my_role: Role;
+  can: Action[];
+}
+
+const one = <T,>(v: T | undefined, what: string): T => {
+  if (v === undefined) throw notFound(what);
+  return v;
+};
+const str = (v: unknown, field: string, max = 200): string | null => {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string') throw bad(`${field} must be text`);
+  const t = v.trim();
+  if (t.length > max) throw bad(`${field} is too long`);
+  return t || null;
+};
+const pick = <T extends string>(v: unknown, allowed: readonly T[], field: string): T => {
+  if (typeof v !== 'string' || !(allowed as readonly string[]).includes(v)) throw bad(`${field} must be one of ${allowed.join(', ')}`);
+  return v as T;
+};
+const vague = (v: unknown, field: string): { on: string | null; precision: Precision } => {
+  if (v === undefined || v === null || v === '') return { on: null, precision: 'UNKNOWN' };
+  const p = parseVagueDate(v);
+  if (!p) throw bad(`${field} must be a year (2018), a month (2018-03) or a date (2018-03-14)`);
+  if (p.on > todayIso()) throw bad(`${field} cannot be in the future`);
+  return p;
+};
+
+async function moduleOf(c: Client, code: unknown): Promise<SpeciesModule & { species_id: number; common_name: string }> {
+  if (typeof code !== 'string') throw bad('species is required (dog or cat)');
+  const r = await kdb(c)
+    .selectFrom('ref.species_module as m')
+    .innerJoin('ref.species as s', 's.species_id', 'm.species_id')
+    .select(['m.code', 'm.schema', 'm.schema_version', 'm.species_id', 's.common_name'])
+    .where('m.code', '=', code.toLowerCase())
+    .executeTakeFirst();
+  if (!r || r.species_id === null) throw bad(`Petopia does not have a ${code} module yet`);
+  return { code: r.code, schema: r.schema, schema_version: r.schema_version, species_id: Number(r.species_id), common_name: r.common_name };
+}
+
+function baseQuery(c: Client) {
+  return kdb(c)
+    .selectFrom('animal.animal as a')
+    .innerJoin('ref.species as s', 's.species_id', 'a.species_id')
+    .leftJoin('core.habitat as h', 'h.habitat_id', 'a.habitat_id')
+    .leftJoin('media.item as p', (j) => j.onRef('p.media_item_id', '=', 'a.profile_media_id').on('p.retired_at', 'is', null))
+    .select([
+      'a.animal_id', 'a.name', 'a.nickname', 's.common_name as species', 'a.module_code', 'a.breed', 'a.sex', 'a.neuter_status', 'a.colour_markings',
+      'a.born_on', 'a.born_precision', 'a.acquired_on', 'a.acquired_precision', 'a.microchip', 'a.registration', 'a.source', 'h.name as habitat',
+      'a.kind', 'a.status', 'a.status_on', 'a.health_status', 'a.ext', 'p.sha256',
+    ]);
+}
+type Row = Awaited<ReturnType<ReturnType<typeof baseQuery>['executeTakeFirstOrThrow']>>;
+
+function view(r: Row, role: Role, today: string): AnimalView {
+  const bp = r.born_precision as Precision;
+  const ap = r.acquired_precision as Precision;
+  return {
+    id: Number(r.animal_id), name: r.name, nickname: r.nickname, species: r.species, module: r.module_code, breed: r.breed,
+    sex: r.sex, neuter_status: r.neuter_status, colour_markings: r.colour_markings,
+    born: formatVagueDate(r.born_on, bp), born_precision: bp, age: ageOf(r.born_on, bp, today),
+    acquired: formatVagueDate(r.acquired_on, ap), acquired_precision: ap,
+    microchip: r.microchip, registration: r.registration, source: r.source, habitat: r.habitat ?? null,
+    kind: r.kind, status: r.status, status_on: r.status_on, health_status: r.health_status,
+    latest_weight: null, photo: r.sha256 ? `api/media/${r.sha256}.jpg` : null, ext: r.ext ?? {},
+    my_role: role, can: allowedActions(role),
+  };
+}
+
+async function rolesFor(c: Client, member: string): Promise<Map<number, Role>> {
+  const r = await kdb(c).selectFrom('core.animal_role').select(['animal_id', 'role']).where('member_name', '=', member).where('to_on', 'is', null).execute();
+  return new Map(r.map((x) => [Number(x.animal_id), x.role as Role]));
+}
+
+/** Everyone with household access sees every animal (sec 7.2 row 1); active animals first, then by name. */
+export async function listAnimals(c: Client, member: string, today = todayIso()): Promise<AnimalView[]> {
+  const roles = await rolesFor(c, member);
+  const rows = await baseQuery(c)
+    .orderBy(sql`a.status = 'ACTIVE'`, 'desc')
+    .orderBy(sql`lower(a.name)`)
+    .execute();
+  return rows.map((r) => view(r, roles.get(Number(r.animal_id)) ?? 'FAMILY', today));
+}
+
+export async function getAnimal(c: Client, id: number, member: string, today = todayIso()): Promise<AnimalView> {
+  const role = await requireOn(c, id, member, 'VIEW');
+  return view(one(await baseQuery(c).where('a.animal_id', '=', String(id)).executeTakeFirst(), 'no such animal'), role, today);
+}
+
+export interface NewAnimal {
+  name?: unknown; species?: unknown; breed?: unknown; sex?: unknown; neuter_status?: unknown; born?: unknown; acquired?: unknown;
+  nickname?: unknown; colour_markings?: unknown; microchip?: unknown; kind?: unknown; ext?: unknown;
+}
+
+/** Add an animal (sec 9.4 step 1). The creator becomes its first Owner, in the same transaction. Lives at Home. */
+export async function createAnimal(c: Client, ws: number, member: string, b: NewAnimal, today = todayIso()): Promise<AnimalView> {
+  const name = str(b.name, 'name', 80);
+  if (!name) throw bad('name is required');
+  const mod = await moduleOf(c, b.species);
+  const ext = assertExt(mod, b.ext ?? {});
+  const born = vague(b.born, 'born');
+  const acquired = vague(b.acquired, 'acquired');
+  const home = await kdb(c).selectFrom('core.habitat').select('habitat_id').where('kind', '=', 'HOME').where('retired_at', 'is', null).orderBy('habitat_id').executeTakeFirst();
+  const microchip = str(b.microchip, 'microchip', 23);
+  const ins = await kdb(c)
+    .insertInto('animal.animal')
+    .values({
+      workspace_id: ws, name, nickname: str(b.nickname, 'nickname', 80), species_id: mod.species_id, breed: str(b.breed, 'breed', 80),
+      module_code: mod.code, ext: JSON.stringify(ext), ext_schema_version: mod.schema_version,
+      sex: b.sex === undefined ? 'UNKNOWN' : pick(b.sex, SEX, 'sex'),
+      neuter_status: b.neuter_status === undefined ? 'UNKNOWN' : pick(b.neuter_status, NEUTER, 'neuter_status'),
+      colour_markings: str(b.colour_markings, 'colour_markings'),
+      born_on: born.on, born_precision: born.precision, acquired_on: acquired.on, acquired_precision: acquired.precision,
+      microchip: microchip ? microchip.replace(/\s+/g, '') : null,
+      kind: b.kind === undefined ? 'PET' : pick(b.kind, KIND, 'kind'),
+      habitat_id: home ? Number(home.habitat_id) : null,
+      created_by: member,
+    })
+    .returning('animal_id')
+    .executeTakeFirstOrThrow();
+  const id = Number(ins.animal_id);
+  await setFirstOwner(c, ws, id, member);
+  return getAnimal(c, id, member, today);
+}
+
+/** Basic profile edits (Owner / Primary carer); status changes (rehomed / deceased) are Owner only (sec 7.2). */
+export async function updateAnimal(c: Client, id: number, member: string, b: Record<string, unknown>, today = todayIso()): Promise<AnimalView> {
+  await requireOn(c, id, member, 'EDIT_PROFILE');
+  const cur = one(await kdb(c).selectFrom('animal.animal').select(['module_code', 'ext', 'status']).where('animal_id', '=', String(id)).executeTakeFirst(), 'no such animal');
+  const set: Record<string, unknown> = {};
+  const known = new Set(['name', 'nickname', 'breed', 'sex', 'neuter_status', 'colour_markings', 'born', 'acquired', 'microchip', 'registration', 'source', 'health_status', 'status', 'status_on', 'ext']);
+  for (const k of Object.keys(b)) if (!known.has(k)) throw bad(`${k} cannot be changed here`);
+  if ('name' in b) { const n = str(b.name, 'name', 80); if (!n) throw bad('name cannot be empty'); set.name = n; }
+  for (const k of ['nickname', 'breed', 'colour_markings', 'registration', 'source'] as const) if (k in b) set[k] = str(b[k], k);
+  if ('microchip' in b) { const m = str(b.microchip, 'microchip', 23); set.microchip = m ? m.replace(/\s+/g, '') : null; }
+  if ('sex' in b) set.sex = pick(b.sex, SEX, 'sex');
+  if ('neuter_status' in b) set.neuter_status = pick(b.neuter_status, NEUTER, 'neuter_status');
+  if ('born' in b) { const v = vague(b.born, 'born'); set.born_on = v.on; set.born_precision = v.precision; }
+  if ('acquired' in b) { const v = vague(b.acquired, 'acquired'); set.acquired_on = v.on; set.acquired_precision = v.precision; }
+  if ('health_status' in b) {
+    set.health_status = b.health_status === null ? null : pick(b.health_status, HEALTH, 'health_status');
+    set.health_status_by = set.health_status === null ? null : member;
+    set.health_status_at = set.health_status === null ? null : new Date().toISOString();
+  }
+  if ('status' in b || 'status_on' in b) {
+    await requireOn(c, id, member, 'MANAGE_ROLES');
+    const st = 'status' in b ? pick(b.status, STATUS, 'status') : cur.status;
+    set.status = st;
+    set.status_on = st === 'ACTIVE' ? null : vague(b.status_on ?? today, 'status_on').on;
+  }
+  if ('ext' in b) {
+    const mod = await moduleOf(c, cur.module_code);
+    set.ext = JSON.stringify(assertExt(mod, b.ext));
+    set.ext_schema_version = mod.schema_version;
+  }
+  if (Object.keys(set).length) {
+    await kdb(c).updateTable('animal.animal').set({ ...set, updated_at: new Date().toISOString() }).where('animal_id', '=', String(id)).execute();
+  }
+  return getAnimal(c, id, member, today);
+}
+
+/** Decodes + re-encodes outside the transaction (CPU only); call setProfilePhoto with the result inside it. */
+export const preparePhoto = (dataBase64: unknown): Promise<Processed> => {
+  if (typeof dataBase64 !== 'string' || !dataBase64) throw bad('no photo was sent');
+  return processPhoto(Buffer.from(dataBase64.replace(/^data:[^,]*,/, ''), 'base64'));
+};
+
+/** Profile photo (sec 9.4 step 2): Owner / Primary carer / Family may add photos (sec 7.2). */
+export async function setProfilePhoto(c: Client, ws: number, id: number, member: string, p: Processed, root: string, today = todayIso()): Promise<AnimalView> {
+  await requireOn(c, id, member, 'ADD_MEDIA');
+  const path = await storePhoto(root, p); // a file written before a failed commit is harmless: named by its own hash
+  const m = await c.query<{ media_item_id: string }>(
+    `INSERT INTO media.item (workspace_id, sha256, path, width, height, added_by) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (workspace_id, sha256) DO UPDATE SET retired_at = NULL RETURNING media_item_id`,
+    [ws, p.sha256, path, p.width, p.height, member],
+  );
+  await c.query('UPDATE animal.animal SET profile_media_id = $2, updated_at = now() WHERE animal_id = $1', [id, m.rows[0]!.media_item_id]);
+  return getAnimal(c, id, member, today);
+}
+
+/** A media file may be read only if its hash is a live item of this household (RLS) -- the caller then reads the file. */
+export async function mediaVisible(c: Client, sha: string): Promise<boolean> {
+  return ((await c.query('SELECT 1 FROM media.item WHERE sha256 = $1 AND retired_at IS NULL', [sha])).rowCount ?? 0) > 0;
+}
+
+export { roleOn };
