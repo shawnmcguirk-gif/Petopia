@@ -1,0 +1,25 @@
+{
+  "event": "stage",
+  "session": "Cowork/claude-sonnet-5-5/ryan",
+  "actor_type": "human",
+  "attested_by_session": true,
+  "project": "petopia",
+  "target": {
+    "d_number": "D1"
+  },
+  "payload": {
+    "op": "set",
+    "stage": "gate:brief",
+    "from": {
+      "next": "brief",
+      "terminal": null
+    },
+    "note": "ryan said 'spec', which finishes the brief stage and approves it; this marks it finished first (kit advance spec).",
+    "approver": "ryan",
+    "via": "kit advance",
+    "attestation": {
+      "quote": "So that’s a lift, build, review, deploy confirmation from me once opus has completed the spec.. no need to ask for confirmation again"
+    }
+  },
+  "at": "2026-10-07T00:41:58Z"
+}

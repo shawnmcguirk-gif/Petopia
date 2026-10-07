@@ -1,0 +1,23 @@
+{
+  "event": "gate",
+  "session": "Cowork/claude-sonnet-5-5/ryan",
+  "actor_type": "human",
+  "attested_by_session": true,
+  "project": "petopia",
+  "target": {
+    "d_number": "D1",
+    "gate": "brief"
+  },
+  "payload": {
+    "verdict": "approve",
+    "approver": "ryan",
+    "version": null,
+    "note": "Ryan pre-approved lift/build/review/deploy 2026-10-07 01:32; spec is Opus draft 1, not independently cold-read",
+    "via": "kit advance",
+    "attestation": {
+      "quote": "So that’s a lift, build, review, deploy confirmation from me once opus has completed the spec.. no need to ask for confirmation again"
+    }
+  },
+  "at": "2026-10-07T00:41:59Z",
+  "title": "brief -- approve"
+}

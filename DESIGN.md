@@ -82,7 +82,9 @@ timestamp, e.g.:
 
 ## Decisions
 
-<!-- axiom:no-decisions-yet -->
-_No decisions yet — the first one will be D1. Raise it with a `decision`
-receipt (CONVENTIONS sec 29); once a real D1 heading exists, delete this
-line and the marker above it._
+### D1: Petopia core -- pets, care records, document inbox, reminders, Synapse menu -- [Spec'd 2026-10-07T00:48:32Z -- was: Briefed 2026-10-07T00:41:59Z]
+
+Lifted from `docs/concepts/2026-10-07-petopia/` (Ryan's brief frozen in `REQUEST.md`; hero art in `reference/`).
+D1's own file: `docs/specs/D1-petopia-core.md` (Opus draft 1, 781 lines, NOT yet independently cold-read).
+Same setup as Vitalis: own `petopia` database, TS engine, React web UI at `/petopia/` behind Caddy, tile on the Synapse home menu.
+Lifted document is an already-complete spec draft, not a bare brief. Open at lift: Benji's breed/age (Q1), who owns which pet (Q2), inbox location (Q3), AI-reading go-ahead (Q4), Synapse feature-vocabulary + n8n edits (Q5).

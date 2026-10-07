@@ -18,6 +18,7 @@ full grammar and vocabulary.
 
 | Thread | Last stage completed | Next expected stage | Notes |
 |---|---|---|---|
+| D1 Petopia core | [Spec gate approved 2026-10-07T00:48:32Z] auto-writeback (D33) | build | **2026-10-07 (Cowork/Sonnet, Ryan):** lifted from concept `2026-10-07-petopia`; spec draft 1 by Opus in `docs/specs/D1-petopia-core.md`. Nothing built yet. |
 
 ## 2026-10-07 — scaffolded
 
