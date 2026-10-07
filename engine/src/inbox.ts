@@ -156,6 +156,14 @@ export async function scanFolder(ws: number, deps: InboxDeps, b: Binding): Promi
  *  stage -- sweep, read, assess -- so a withdrawal stops reading at once (independent review, finding 1). */
 const GO_AHEAD = 'EXISTS (SELECT 1 FROM core.vault_folder_binding b WHERE b.workspace_id = i.workspace_id AND b.member_name = i.member_name AND b.go_ahead_at IS NOT NULL)';
 const AI_GO_AHEAD = 'EXISTS (SELECT 1 FROM core.vault_folder_binding b WHERE b.workspace_id = i.workspace_id AND b.member_name = i.member_name AND b.go_ahead_at IS NOT NULL AND b.ai_go_ahead_at IS NOT NULL)';
+/** Inside the transaction that would KEEP what was read: is the go-ahead still there? Locks the item and its folder's
+ *  binding (FOR SHARE), so a withdrawal in flight either commits first and is seen here, or waits until this commits. */
+async function stillAllowed(c: Client, id: number, needAi: boolean): Promise<boolean> {
+  const r = await c.query(
+    `SELECT 1 FROM ingest.inbox_item i JOIN core.vault_folder_binding b ON b.workspace_id = i.workspace_id AND b.member_name = i.member_name
+      WHERE i.inbox_item_id = $1 AND b.go_ahead_at IS NOT NULL${needAi ? ' AND b.ai_go_ahead_at IS NOT NULL' : ''} FOR UPDATE OF i FOR SHARE OF b`, [id]);
+  return !!r.rowCount;
+}
 
 /** DISCOVERED -> READ: the text of every page (text layer, else OCR at home). An unreadable file waits for a person.
  *  Returns false when nothing was read (no go-ahead, or it was withdrawn meanwhile). */
@@ -171,8 +179,7 @@ export async function readText(ws: number, deps: InboxDeps, item: Item): Promise
   }
   return withTxn(ws, false, async (c) => {
     // the go-ahead was withdrawn while the file was being read: keep nothing of it, and put it back to wait
-    const still = await c.query(`SELECT 1 FROM ingest.inbox_item i WHERE inbox_item_id = $1 AND ${GO_AHEAD} FOR UPDATE OF i`, [item.id]);
-    if (!still.rowCount) {
+    if (!(await stillAllowed(c, item.id, false))) {
       await c.query("UPDATE ingest.inbox_item SET status = 'DISCOVERED', updated_at = now() WHERE inbox_item_id = $1 AND status = 'READ'", [item.id]);
       return false;
     }
@@ -257,7 +264,14 @@ export async function assess(ws: number, deps: InboxDeps, item: Item): Promise<'
     return 'FAILED';
   }
   const g = guardAnswer(checked.answer, pre.text.pages);
-  await withTxn(ws, false, async (c) => {
+  const kept = await withTxn(ws, false, async (c) => {
+    if (!(await stillAllowed(c, item.id, reader.kind === 'claude'))) {
+      // The go-ahead was withdrawn while the reader was working: nothing of its answer is kept (no values, no page
+      // references), only the run and its cost, and the document goes back to waiting (finding 1, in flight).
+      await insertRow(c, 'ingest.extraction_run', 'extraction_run_id', { workspace_id: ws, inbox_item_id: item.id, method, status: 'FAILED', errors: 'GO_AHEAD_WITHDRAWN', ...usage });
+      await c.query("UPDATE ingest.inbox_item SET status = 'READ', updated_at = now() WHERE inbox_item_id = $1 AND status = 'ASSESSED'", [item.id]);
+      return false;
+    }
     const run = await insertRow(c, 'ingest.extraction_run', 'extraction_run_id', {
       workspace_id: ws, inbox_item_id: item.id, method, status: 'OK', valid: true, dropped: g.dropped, pages: pre.text!.pages.length,
       errors: g.reasons.length ? [...new Set(g.reasons)].join(',') : null, ...usage,
@@ -276,8 +290,9 @@ export async function assess(ws: number, deps: InboxDeps, item: Item): Promise<'
       [item.id, animal, g.doc_kind, g.document_date, item.discovered_at, JSON.stringify(g.found), g.dropped, flags],
     );
     if (g.document_date) await c.query('UPDATE ingest.source_document SET document_date = $2, doc_kind = $3 WHERE source_document_id = $1', [item.doc, g.document_date, g.doc_kind]);
+    return true;
   });
-  return 'ASSESSED';
+  return kept ? 'ASSESSED' : 'SKIPPED';
 }
 
 export interface SweepReport { workspace_id: number; discovered: number; read: number; assessed: number; waiting: number; failed: number; filed: number }

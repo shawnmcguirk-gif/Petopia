@@ -66,10 +66,12 @@ function answerFor(text: string, over: Partial<ReaderAnswer> = {}): ReaderAnswer
 const calls = { claude: [] as PageText[][], local: [] as PageText[][] };
 let claudeMode: 'ok' | 'throw' | 'garbage' = 'ok';
 let override: ((text: string) => ReaderAnswer | null) | null = null;
+let duringClaude: ((text: string) => Promise<void>) | null = null; // runs while "Claude" is reading (a withdrawal in flight)
 const claude: Reader = {
   kind: 'claude',
-  read: (pages) => {
+  read: async (pages) => {
     calls.claude.push(pages);
+    await duringClaude?.(pages.map((p) => p.text).join('\n'));
     if (claudeMode === 'throw') return Promise.reject(new Error('READER_TIMEOUT'));
     if (claudeMode === 'garbage') return Promise.resolve({ output: { hello: 'world' }, model: 'fake', cli_version: null, usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.01 } });
     const text = pages.map((p) => p.text).join('\n');
@@ -188,7 +190,9 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     await expect(inA((c) => inbox.decide(c, it2.id, kim, { action: 'PROCESS', animal_id: cat }))).rejects.toMatchObject({ status: 404 });
     await expect(inA((c) => inbox.getItem(c, it2.id, kim))).rejects.toMatchObject({ status: 404 });
     // 03/10/2026 could be 3 Oct or 10 Mar: the person must set the date themselves (finding 4)
-    await expect(inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T))).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/day\/month/) });
+    const amb = await inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T)).then(() => null, (e: unknown) => e as { status: number; message: string });
+    expect(amb?.status).toBe(400);
+    expect(amb?.message).toMatch(/day\/month/);
     const view = await inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T));
     expect(view).toMatchObject({ animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' });
     await expect(inbox.fileItem(A, deps(), it2.id, alex, T)).rejects.toMatchObject({ status: 409 }); // values still waiting
@@ -314,8 +318,8 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
   it('finding 1: withdrawing the folder go-ahead withdraws the AI go-ahead too (recorded), and stops reading at every stage', async () => {
     await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
     await writeFile(join(inboxDir(), 'fifth.txt'), invoice('R5'));
-    const b = await withTxn(null, true, (c) => c.query('SELECT workspace_id::int AS workspace_id, member_name, vault_folder_name, go_ahead_at::text, ai_go_ahead_at::text FROM core.vault_folder_binding WHERE member_name = $1', [alex]));
-    await inbox.scanFolder(A, deps(), b.rows[0]); // discovered, not yet read
+    const b = await withTxn(null, true, (c) => c.query<Parameters<typeof inbox.scanFolder>[2]>('SELECT workspace_id::int AS workspace_id, member_name, vault_folder_name, go_ahead_at::text, ai_go_ahead_at::text FROM core.vault_folder_binding WHERE member_name = $1', [alex]));
+    await inbox.scanFolder(A, deps(), b.rows[0]!); // discovered, not yet read
     const fifth = await byFile('fifth');
     expect(fifth.status).toBe('DISCOVERED');
     const evBefore = (await withTxn(A, true, (c) => c.query('SELECT 1 FROM core.consent_event WHERE member_name = $1', [alex]))).rowCount!;
@@ -355,6 +359,30 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     expect(await byFile('fourth')).toMatchObject({ status: 'READ' });
   });
 
+  it('finding 1: a withdrawal while Claude is reading keeps nothing of its answer; the document goes back to waiting', async () => {
+    await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', true));
+    await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
+    await writeFile(join(inboxDir(), 'sixth.txt'), invoice('R6'));
+    // earlier documents still waiting are read as normal; the person says stop while the sixth is with Claude
+    duringClaude = async (text) => { if (text.includes('Ref R6')) await inA(async (c) => { await inbox.setConsent(c, A, alex, 'AI_READING', false); }); };
+    const n = calls.claude.length;
+    try { await inbox.sweepWorkspace(A, deps()); } finally { duringClaude = null; }
+    expect(calls.claude.length).toBeGreaterThan(n); // it did go to Claude before the withdrawal landed
+    const sixth = await byFile('sixth');
+    expect(sixth.status).toBe('READ');
+    const kept = await withTxn(A, true, (c) => c.query<{ p: number; runs: string[] }>(
+      `SELECT (SELECT count(*) FROM ingest.proposal WHERE inbox_item_id = $1)::int AS p,
+              (SELECT array_agg(coalesce(errors, status) ORDER BY extraction_run_id) FROM ingest.extraction_run WHERE inbox_item_id = $1 AND method = 'LLM_PROPOSAL') AS runs`, [sixth.id]));
+    expect(kept.rows[0]).toEqual({ p: 0, runs: ['GO_AHEAD_WITHDRAWN'] });
+    // nothing else goes to Claude now
+    const m = calls.claude.length;
+    await inbox.sweepWorkspace(A, deps());
+    expect(calls.claude.length).toBe(m);
+    const after = await byFile('sixth');
+    expect(after.status).toBe('READ');
+    expect(after.flags).toContain('AWAITING_AI_GO_AHEAD');
+  });
+
   it('finding 5: an unusual weight from a document is never confirmed automatically -- it waits for an explicit "yes, that\'s right"', async () => {
     await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', true));
     await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
@@ -380,7 +408,8 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     expect((await w()).status).toBe('PROPOSED');
     await expect(inbox.fileItem(A, deps(), it.id, alex, T)).rejects.toMatchObject({ status: 409 });
     await inA((c) => inbox.reviewProposal(c, it.id, wid, alex, { action: 'accept', confirm_unusual: true }));
-    expect(await w()).toMatchObject({ status: 'ACCEPTED', decided_by: alex, flags: expect.arrayContaining(['UNUSUAL_CONFIRMED']) });
+    expect(await w()).toMatchObject({ status: 'ACCEPTED', decided_by: alex });
+    expect((await w()).flags).toContain('UNUSUAL_CONFIRMED');
     // finding 9 too: the filed name and its hash-suffixed name are both taken -> filed under the next free name, recorded
     const dir = join(root, folder, 'Pets', 'filed', 'invoice');
     await mkdir(dir, { recursive: true });
@@ -395,7 +424,7 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     expect(await readFile(join(dir, `heavy-${h8}-2.txt`), 'utf8')).toBe(text);
     const m = await withTxn(A, true, (c) => c.query<{ id: number; status: string; plausibility_confirmed: boolean; confirmed_by: string }>(
       'SELECT measurement_id::int AS id, status, plausibility_confirmed, confirmed_by FROM health.measurement WHERE source_document_id = $1', [out.document_id]));
-    expect(m.rows).toEqual([{ id: expect.any(Number), status: 'CONFIRMED', plausibility_confirmed: true, confirmed_by: alex }]);
+    expect(m.rows.map((r) => [r.status, r.plausibility_confirmed, r.confirmed_by])).toEqual([['CONFIRMED', true, alex]]);
     // finding 11: who confirmed it, and when, is frozen; the status can still move along the flow
     const id = m.rows[0]!.id;
     await expect(inA((c) => c.query("UPDATE health.measurement SET confirmed_by = 'someone-else' WHERE measurement_id = $1", [id]))).rejects.toMatchObject({ code: '23514' });
