@@ -6,6 +6,10 @@ import { ageOf, formatVagueDate, parseVagueDate, todayIso, type Age, type Precis
 import { kdb, type Client } from './db.js';
 import { bad, notFound } from './errors.js';
 import { assertExt, type SpeciesModule } from './species.js';
+import { currentFoods, type FoodSummary } from './feeding.js';
+import { latestWeights, type LatestWeight } from './measurements.js';
+import { currentByAnimal, type CurrentMedicine } from './medications.js';
+import { checkContact } from './records.js';
 import { processPhoto, storePhoto, type Processed } from './photos.js';
 
 const SEX = ['FEMALE', 'MALE', 'UNKNOWN'] as const;
@@ -38,8 +42,15 @@ export interface AnimalView {
   status_on: string | null;
   /** Set by a person (Owner / Primary carer); null until someone does. Never computed (sec 9.3). */
   health_status: string | null;
-  /** S3 fills this from the latest CONFIRMED weight; null until then, and the UI hides it. */
-  latest_weight: { kg: string; on: string } | null;
+  /** The latest CONFIRMED weight (S3) with its change since the one before; null until one is recorded (UI hides it). */
+  latest_weight: LatestWeight | null;
+  /** The current food (S3), or null. */
+  current_food: FoodSummary | null;
+  /** Derived from confirmed medication events (S4); stopped medicines are not here. */
+  current_medication: Pick<CurrentMedicine, 'medication_id' | 'product_name' | 'dose' | 'frequency' | 'since'>[];
+  /** The usual vet practice and the emergency contact (core.contact), when set. */
+  vet: { id: number; name: string; phone: string | null } | null;
+  emergency_contact: { id: number; name: string; phone: string | null } | null;
   photo: string | null; // "api/media/<sha>.jpg", relative to the app's base
   ext: Record<string, unknown>;
   my_role: Role;
@@ -61,6 +72,15 @@ const pick = <T extends string>(v: unknown, allowed: readonly T[], field: string
   if (typeof v !== 'string' || !(allowed as readonly string[]).includes(v)) throw bad(`${field} must be one of ${allowed.join(', ')}`);
   return v as T;
 };
+/** A microchip number: spaces removed, then 6-23 letters or digits (the DB CHECK is the second line). */
+export function cleanMicrochip(v: unknown): string | null {
+  const m = str(v, 'microchip', 40);
+  if (!m) return null;
+  const chip = m.replace(/\s+/g, '');
+  if (!/^[0-9A-Za-z]{6,23}$/.test(chip)) throw bad('a microchip number is 6 to 23 letters or digits');
+  return chip;
+}
+
 const vague = (v: unknown, field: string): { on: string | null; precision: Precision } => {
   if (v === undefined || v === null || v === '') return { on: null, precision: 'UNKNOWN' };
   const p = parseVagueDate(v);
@@ -87,25 +107,38 @@ function baseQuery(c: Client) {
     .innerJoin('ref.species as s', 's.species_id', 'a.species_id')
     .leftJoin('core.habitat as h', 'h.habitat_id', 'a.habitat_id')
     .leftJoin('media.item as p', (j) => j.onRef('p.media_item_id', '=', 'a.profile_media_id').on('p.retired_at', 'is', null))
+    .leftJoin('core.contact as v', 'v.contact_id', 'a.vet_contact_id')
+    .leftJoin('core.contact as e', 'e.contact_id', 'a.emergency_contact_id')
     .select([
       'a.animal_id', 'a.name', 'a.nickname', 's.common_name as species', 'a.module_code', 'a.breed', 'a.sex', 'a.neuter_status', 'a.colour_markings',
       'a.born_on', 'a.born_precision', 'a.acquired_on', 'a.acquired_precision', 'a.microchip', 'a.registration', 'a.source', 'h.name as habitat',
       'a.kind', 'a.status', 'a.status_on', 'a.health_status', 'a.ext', 'p.sha256',
+      'v.contact_id as vet_id', 'v.name as vet_name', 'v.phone as vet_phone', 'e.contact_id as em_id', 'e.name as em_name', 'e.phone as em_phone',
     ]);
 }
 type Row = Awaited<ReturnType<ReturnType<typeof baseQuery>['executeTakeFirstOrThrow']>>;
 
-function view(r: Row, role: Role, today: string): AnimalView {
+interface Extras { weights: Map<number, LatestWeight>; foods: Map<number, FoodSummary>; meds: Map<number, CurrentMedicine[]> }
+async function extras(c: Client): Promise<Extras> {
+  return { weights: await latestWeights(c), foods: await currentFoods(c), meds: await currentByAnimal(c) };
+}
+
+function view(r: Row, role: Role, today: string, x: Extras): AnimalView {
+  const id = Number(r.animal_id);
   const bp = r.born_precision as Precision;
   const ap = r.acquired_precision as Precision;
   return {
-    id: Number(r.animal_id), name: r.name, nickname: r.nickname, species: r.species, module: r.module_code, breed: r.breed,
+    id, name: r.name, nickname: r.nickname, species: r.species, module: r.module_code, breed: r.breed,
     sex: r.sex, neuter_status: r.neuter_status, colour_markings: r.colour_markings,
     born: formatVagueDate(r.born_on, bp), born_precision: bp, age: ageOf(r.born_on, bp, today),
     acquired: formatVagueDate(r.acquired_on, ap), acquired_precision: ap,
     microchip: r.microchip, registration: r.registration, source: r.source, habitat: r.habitat ?? null,
     kind: r.kind, status: r.status, status_on: r.status_on, health_status: r.health_status,
-    latest_weight: null, photo: r.sha256 ? `api/media/${r.sha256}.jpg` : null, ext: r.ext ?? {},
+    latest_weight: x.weights.get(id) ?? null, current_food: x.foods.get(id) ?? null,
+    current_medication: (x.meds.get(id) ?? []).map((m) => ({ medication_id: m.medication_id, product_name: m.product_name, dose: m.dose, frequency: m.frequency, since: m.since })),
+    vet: r.vet_id ? { id: Number(r.vet_id), name: r.vet_name!, phone: r.vet_phone ?? null } : null,
+    emergency_contact: r.em_id ? { id: Number(r.em_id), name: r.em_name!, phone: r.em_phone ?? null } : null,
+    photo: r.sha256 ? `api/media/${r.sha256}.jpg` : null, ext: r.ext ?? {},
     my_role: role, can: allowedActions(role),
   };
 }
@@ -122,12 +155,13 @@ export async function listAnimals(c: Client, member: string, today = todayIso())
     .orderBy(sql`a.status = 'ACTIVE'`, 'desc')
     .orderBy(sql`lower(a.name)`)
     .execute();
-  return rows.map((r) => view(r, roles.get(Number(r.animal_id)) ?? 'FAMILY', today));
+  const x = await extras(c);
+  return rows.map((r) => view(r, roles.get(Number(r.animal_id)) ?? 'FAMILY', today, x));
 }
 
 export async function getAnimal(c: Client, id: number, member: string, today = todayIso()): Promise<AnimalView> {
   const role = await requireOn(c, id, member, 'VIEW');
-  return view(one(await baseQuery(c).where('a.animal_id', '=', String(id)).executeTakeFirst(), 'no such animal'), role, today);
+  return view(one(await baseQuery(c).where('a.animal_id', '=', String(id)).executeTakeFirst(), 'no such animal'), role, today, await extras(c));
 }
 
 export interface NewAnimal {
@@ -144,7 +178,7 @@ export async function createAnimal(c: Client, ws: number, member: string, b: New
   const born = vague(b.born, 'born');
   const acquired = vague(b.acquired, 'acquired');
   const home = await kdb(c).selectFrom('core.habitat').select('habitat_id').where('kind', '=', 'HOME').where('retired_at', 'is', null).orderBy('habitat_id').executeTakeFirst();
-  const microchip = str(b.microchip, 'microchip', 23);
+  const microchip = cleanMicrochip(b.microchip);
   const ins = await kdb(c)
     .insertInto('animal.animal')
     .values({
@@ -154,7 +188,7 @@ export async function createAnimal(c: Client, ws: number, member: string, b: New
       neuter_status: b.neuter_status === undefined ? 'UNKNOWN' : pick(b.neuter_status, NEUTER, 'neuter_status'),
       colour_markings: str(b.colour_markings, 'colour_markings'),
       born_on: born.on, born_precision: born.precision, acquired_on: acquired.on, acquired_precision: acquired.precision,
-      microchip: microchip ? microchip.replace(/\s+/g, '') : null,
+      microchip,
       kind: b.kind === undefined ? 'PET' : pick(b.kind, KIND, 'kind'),
       habitat_id: home ? Number(home.habitat_id) : null,
       created_by: member,
@@ -171,11 +205,18 @@ export async function updateAnimal(c: Client, id: number, member: string, b: Rec
   await requireOn(c, id, member, 'EDIT_PROFILE');
   const cur = one(await kdb(c).selectFrom('animal.animal').select(['module_code', 'ext', 'status']).where('animal_id', '=', String(id)).executeTakeFirst(), 'no such animal');
   const set: Record<string, unknown> = {};
-  const known = new Set(['name', 'nickname', 'breed', 'sex', 'neuter_status', 'colour_markings', 'born', 'acquired', 'microchip', 'registration', 'source', 'health_status', 'status', 'status_on', 'ext']);
+  const known = new Set(['name', 'nickname', 'breed', 'sex', 'neuter_status', 'colour_markings', 'born', 'acquired', 'microchip', 'registration', 'source', 'health_status', 'status', 'status_on', 'ext', 'vet_contact_id', 'emergency_contact_id']);
   for (const k of Object.keys(b)) if (!known.has(k)) throw bad(`${k} cannot be changed here`);
   if ('name' in b) { const n = str(b.name, 'name', 80); if (!n) throw bad('name cannot be empty'); set.name = n; }
   for (const k of ['nickname', 'breed', 'colour_markings', 'registration', 'source'] as const) if (k in b) set[k] = str(b[k], k);
-  if ('microchip' in b) { const m = str(b.microchip, 'microchip', 23); set.microchip = m ? m.replace(/\s+/g, '') : null; }
+  if ('microchip' in b) set.microchip = cleanMicrochip(b.microchip);
+  for (const k of ['vet_contact_id', 'emergency_contact_id'] as const) {
+    if (!(k in b)) continue;
+    const v = b[k];
+    if (v !== null && (typeof v !== 'number' || !Number.isInteger(v) || v < 1)) throw bad(`${k} must be a contact id or null`);
+    await checkContact(c, v);
+    set[k] = v;
+  }
   if ('sex' in b) set.sex = pick(b.sex, SEX, 'sex');
   if ('neuter_status' in b) set.neuter_status = pick(b.neuter_status, NEUTER, 'neuter_status');
   if ('born' in b) { const v = vague(b.born, 'born'); set.born_on = v.on; set.born_precision = v.precision; }

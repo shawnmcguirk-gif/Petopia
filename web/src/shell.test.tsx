@@ -11,7 +11,7 @@ import { summaryLine } from './words';
 const biscuit: Animal = {
   id: 7, name: 'Biscuit', nickname: null, species: 'Cat', module: 'cat', breed: 'Domestic shorthair', sex: 'UNKNOWN', neuter_status: 'UNKNOWN',
   colour_markings: null, born: '2018', born_precision: 'YEAR', age: { years: 8, months: 0, text: 'about 8 years', approximate: true }, acquired: null,
-  microchip: null, habitat: 'Home', kind: 'PET', status: 'ACTIVE', health_status: null, latest_weight: null, photo: null, my_role: 'OWNER', can: ['VIEW'],
+  microchip: null, habitat: 'Home', kind: 'PET', status: 'ACTIVE', health_status: null, latest_weight: null, current_food: null, current_medication: [], vet: null, emergency_contact: null, photo: null, my_role: 'OWNER', can: ['VIEW'],
 };
 
 afterEach(() => {
@@ -22,7 +22,7 @@ afterEach(() => {
 describe('summaryLine', () => {
   it('breed · age, and weight only once one is recorded', () => {
     expect(summaryLine(biscuit)).toBe('Domestic shorthair · about 8 years');
-    expect(summaryLine({ ...biscuit, latest_weight: { kg: '4.200', on: '2026-10-01' } })).toBe('Domestic shorthair · about 8 years · 4.2 kg');
+    expect(summaryLine({ ...biscuit, latest_weight: { kg: '4.200', on: '2026-10-01', change_kg: null } })).toBe('Domestic shorthair · about 8 years · 4.2 kg');
   });
   it('falls back to the species, and leaves out an unknown age', () => {
     expect(summaryLine({ ...biscuit, breed: null, age: null })).toBe('Cat');
@@ -93,7 +93,9 @@ describe('routes', () => {
   it('parses hash routes', () => {
     expect(parseRoute('')).toEqual({ name: 'home' });
     expect(parseRoute('#/add')).toEqual({ name: 'add' });
-    expect(parseRoute('#/animals/12')).toEqual({ name: 'animal', id: 12 });
+    expect(parseRoute('#/animals/12')).toEqual({ name: 'animal', id: 12, tab: 'overview' });
+    expect(parseRoute('#/animals/12/health')).toEqual({ name: 'animal', id: 12, tab: 'health' });
+    expect(parseRoute('#/animals/12/nonsense')).toEqual({ name: 'animal', id: 12, tab: 'overview' });
     expect(parseRoute('#/animals/12/edit')).toEqual({ name: 'edit', id: 12 });
     expect(parseRoute('#/nonsense')).toEqual({ name: 'home' });
   });

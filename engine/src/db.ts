@@ -95,6 +95,8 @@ export interface MediaItemTable { media_item_id: Serial; workspace_id: BigId; sh
 export interface HabitatTable { habitat_id: Serial; workspace_id: BigId; name: string; kind: string; parent_id: BigIdNull; ext: unknown; retired_at: Date | null; created_at: Created; created_by: string }
 export interface AnimalRoleTable { animal_role_id: Serial; workspace_id: BigId; animal_id: BigId; member_name: string; role: string; from_on: Generated<string>; to_on: string | null; set_by: string; set_at: Created }
 
+export interface ContactTable { contact_id: Serial; workspace_id: BigId; kind: string; name: string; phone: string | null; email: string | null; address: string | null; retired_at: Date | null; created_at: Created; created_by: string }
+
 export interface DB {
   'animal.animal': AnimalTable;
   'ref.species': SpeciesTable;
@@ -102,6 +104,7 @@ export interface DB {
   'media.item': MediaItemTable;
   'core.habitat': HabitatTable;
   'core.animal_role': AnimalRoleTable;
+  'core.contact': ContactTable;
 }
 
 /** A Kysely bound to this transaction's client: queries run inside the same BEGIN ... COMMIT and the same RLS setting. */

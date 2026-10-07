@@ -1,11 +1,12 @@
-// Petopia web shell (spec sec 8, 9; slice S2): Home, Add animal, an animal's Overview. Everything it shows comes from
+// Petopia web shell (spec sec 8, 9; slices S2-S4): Home, Add animal, an animal's tabs (Overview, Timeline, Health,
+// Care & food). Everything it shows comes from
 // the engine; who may do what is decided there and only reflected here.
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, get, type Animal, type Me } from './api';
 import { AnimalForm } from './AnimalForm';
 import { Hero } from './Hero';
 import { Home } from './Home';
-import { Overview } from './Overview';
+import { AnimalPage } from './AnimalPage';
 import { TopBar } from './TopBar';
 import { go, useRoute } from './route';
 
@@ -56,7 +57,8 @@ export function App() {
     const a = load.animals.find((x) => x.id === route.id);
     if (!a) return <><TopBar title="Not found" /><p className="mx-auto max-w-xl px-4 pt-8 text-ink-2">That animal isn’t in this household.</p></>;
     if (route.name === 'edit') return <><TopBar title={`Edit ${a.name}`} back={`#/animals/${a.id}`} /><AnimalForm existing={a} onSaved={(n) => { put(n); go(`/animals/${n.id}`); }} /></>;
-    return <><TopBar title={a.name} /><Overview a={a} onChange={put} /></>;
+    const reload = () => { void get<Animal>(`api/animals/${a.id}`).then(put).catch(() => undefined); };
+    return <><TopBar title={a.name} /><AnimalPage a={a} tab={route.tab} onChange={put} reload={reload} /></>;
   }
   return <Home animals={load.animals} />;
 }

@@ -20,10 +20,11 @@ for f in migrations/*.sql; do
   if grep -qx "$b" <<<"$applied"; then echo "applied  $b"; continue; fi
   if [[ "${1:-}" == "--status" ]]; then echo "PENDING  $b"; continue; fi
   echo "applying $b"
-  "${PSQL[@]}" < "$f"
-  "${PSQL[@]}" -c "INSERT INTO public.schema_migrations (filename) VALUES ('$b')"
+  # One transaction per file (psql -1): the file and its schema_migrations row commit together or not at all, so a
+  # failure can never leave a migration half-applied (independent review, 2026-10-07).
+  { cat "$f"; printf "\nINSERT INTO public.schema_migrations (filename) VALUES ('%s');\n" "$b"; } | "${PSQL[@]}" -1 -f -   # -1 applies only with -f/-c, so stdin is read as "-f -"
 done
 if [[ "${1:-}" != "--status" && "$DB" == "petopia" ]]; then
-  docker exec postgres pg_dump -U "$USER_" -d "$DB" --schema-only --no-owner --no-privileges -n core -n ref -n animal -n media -n ingest > schema.sql
+  docker exec postgres pg_dump -U "$USER_" -d "$DB" --schema-only --no-owner --no-privileges -n core -n ref -n animal -n media -n ingest -n health -n diet -n timeline > schema.sql
   echo "schema.sql refreshed ($(wc -l < schema.sql) lines)"
 fi

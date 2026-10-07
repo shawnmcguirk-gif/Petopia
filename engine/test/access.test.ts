@@ -8,6 +8,7 @@ describe('sec 7.2 role table', () => {
     ['LOG_CARE', ['OWNER', 'PRIMARY_CARER', 'FAMILY']],
     ['ADD_MEDIA', ['OWNER', 'PRIMARY_CARER', 'FAMILY']],
     ['DROP_DOCUMENTS', ['OWNER', 'PRIMARY_CARER', 'FAMILY']],
+    ['PROPOSE_RECORDS', ['OWNER', 'PRIMARY_CARER', 'FAMILY']],
     ['CONFIRM_RECORDS', ['OWNER', 'PRIMARY_CARER']],
     ['MANAGE_CARE', ['OWNER', 'PRIMARY_CARER']],
     ['SEE_COSTS', ['OWNER', 'PRIMARY_CARER']],

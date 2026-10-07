@@ -35,7 +35,10 @@ describe('http', () => {
   });
   it('no token -> 401 on every API route (S2 acceptance: /petopia/api/me with no token is 401)', async () => {
     for (const [m, p] of [['GET', '/api/me'], ['GET', '/api/animals'], ['POST', '/api/animals'], ['GET', '/api/animals/1'], ['PATCH', '/api/animals/1'],
-      ['POST', '/api/animals/1/photo'], ['GET', '/api/habitats'], ['GET', `/api/media/${'a'.repeat(64)}.jpg`], ['GET', '/api/nope']] as const) {
+      ['POST', '/api/animals/1/photo'], ['GET', '/api/animals/1/measurements'], ['POST', '/api/animals/1/measurements'], ['GET', '/api/animals/1/feeding'],
+      ['POST', '/api/animals/1/feeding'], ['GET', '/api/animals/1/health'], ['GET', '/api/animals/1/timeline'], ['POST', '/api/animals/1/records/vaccination'],
+      ['POST', '/api/animals/1/records/vaccination/1/confirm'], ['POST', '/api/animals/1/medications'], ['POST', '/api/animals/1/medications/1/events'],
+      ['GET', '/api/contacts'], ['POST', '/api/contacts'], ['GET', '/api/habitats'], ['GET', `/api/media/${'a'.repeat(64)}.jpg`], ['GET', '/api/nope']] as const) {
       const r = await fetch(`${base}${p}`, { method: m });
       expect(r.status, `${m} ${p}`).toBe(401);
       expect(await r.json()).toEqual({ error: 'missing device token' });

@@ -20,17 +20,23 @@ export function Home({ animals }: { animals: Animal[] }) {
           </section>
         ) : (
           <>
-            <section aria-labelledby="our-pets" className="relative">
-              <div className="mb-4 flex items-end justify-between gap-3">
-                <h2 id="our-pets" className="name m-0 text-[30px]">Our Pets</h2>
-                <a href="#/add" className="btn no-underline"><Plus aria-hidden className="h-5 w-5" strokeWidth={1.75} />Add</a>
-              </div>
-              {active.length > 0 && (
+            {active.length > 0 ? (
+              <section aria-labelledby="our-pets" className="relative">
+                <div className="mb-4 flex items-end justify-between gap-3">
+                  <h2 id="our-pets" className="name m-0 text-[30px]">Our Pets</h2>
+                  <a href="#/add" className="btn no-underline"><Plus aria-hidden className="h-5 w-5" strokeWidth={1.75} />Add</a>
+                </div>
                 <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                   {active.map((a) => <AnimalCard key={a.id} a={a} />)}
                 </div>
-              )}
-            </section>
+              </section>
+            ) : (
+              // Every animal is remembered or rehomed: no empty "Our Pets" heading (independent review, 2026-10-07),
+              // just a quiet way to add someone new.
+              <div className="relative flex justify-end">
+                <a href="#/add" className="btn no-underline"><Plus aria-hidden className="h-5 w-5" strokeWidth={1.75} />Add an animal</a>
+              </div>
+            )}
             {past.length > 0 && (
               <section aria-labelledby="remembered" className="mt-12">
                 <h2 id="remembered" className="name m-0 mb-4 text-2xl text-ink-2">Remembered and rehomed</h2>

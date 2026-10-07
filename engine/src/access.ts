@@ -18,6 +18,7 @@ export const ACTIONS = {
   LOG_CARE: ['OWNER', 'PRIMARY_CARER', 'FAMILY'],
   ADD_MEDIA: ['OWNER', 'PRIMARY_CARER', 'FAMILY'], // photos, memories, our-note observations, weights
   DROP_DOCUMENTS: ['OWNER', 'PRIMARY_CARER', 'FAMILY'],
+  PROPOSE_RECORDS: ['OWNER', 'PRIMARY_CARER', 'FAMILY'], // write a vet record: Owner / Primary carer confirmed, Family proposed
   CONFIRM_RECORDS: ['OWNER', 'PRIMARY_CARER'], // a Family member's edit becomes a proposal instead
   MANAGE_CARE: ['OWNER', 'PRIMARY_CARER'], // medication, routines, feeding plan
   SEE_COSTS: ['OWNER', 'PRIMARY_CARER'], // Family sees totals only (SEE_COST_TOTALS)

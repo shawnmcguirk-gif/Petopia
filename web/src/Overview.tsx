@@ -1,5 +1,6 @@
 // An animal's Overview (spec sec 8.3, first tab): photo, identity, and only the details that are actually known.
-// Timeline, Health, Care & food and Files & money arrive with their slices; until then no empty tabs are shown.
+// Below it, "at a glance": current weight (with a sparkline), food, medication and the vet practice -- each only when
+// it is recorded. Timeline, Health and Care & food are the other tabs (AnimalPage.tsx).
 import { Camera, Pencil } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ApiError, post, type Animal } from './api';
@@ -7,6 +8,7 @@ import { AnimalPhoto } from './AnimalPhoto';
 import { StatusChip } from './AnimalCard';
 import { clearNotice, peekNotice } from './AnimalForm';
 import { photoForUpload } from './photo';
+import { Glance } from './Glance';
 import { NEUTER_WORDS, SEX_WORDS, summaryLine } from './words';
 
 const ROLE_WORDS: Record<Animal['my_role'], string> = { OWNER: 'Owner', PRIMARY_CARER: 'Primary carer', FAMILY: 'Family member', VIEWER: 'Viewer' };
@@ -69,6 +71,8 @@ export function Overview({ a, onChange }: { a: Animal; onChange: (a: Animal) => 
           </a>
         )}
       </div>
+
+      <Glance a={a} onChange={onChange} />
 
       {known.length > 0 && (
         <section aria-labelledby="about" className="mt-8">

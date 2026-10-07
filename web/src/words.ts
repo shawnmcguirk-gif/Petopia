@@ -18,3 +18,15 @@ export function summaryLine(a: Pick<Animal, 'species' | 'breed' | 'age' | 'lates
 }
 
 export const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+export const FOOD_TYPE_WORDS: Record<string, string> = {
+  DRY: 'Dry', WET: 'Wet', RAW: 'Raw', MIXED: 'Mixed', PELLET: 'Pellets', FLAKE: 'Flakes', HAY: 'Hay', LIVE: 'Live food', OTHER: 'Other',
+};
+
+/** "Acme Senior · Wet · 60 g · 08:00, 18:00" -- only the parts that are known. */
+export function foodLine(f: { brand: string | null; product: string | null; food_type: string; portion_amount: string | null; portion_unit: string | null; times: string[] }): string {
+  const parts = [[f.brand, f.product].filter(Boolean).join(' '), FOOD_TYPE_WORDS[f.food_type] ?? f.food_type];
+  if (f.portion_amount) parts.push(`${Number(f.portion_amount)} ${f.portion_unit ?? ''}`.trim());
+  if (f.times.length) parts.push(f.times.join(', '));
+  return parts.filter(Boolean).join(' · ');
+}

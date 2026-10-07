@@ -7,11 +7,29 @@
 //   GET  /api/animals/:id             one animal
 //   PATCH /api/animals/:id            profile edits (role-checked per field group)
 //   POST /api/animals/:id/photo       {dataBase64} -> re-encoded, metadata stripped, profile photo
+//   GET  /api/animals/:id/measurements[?measure=weight]   confirmed readings with change since last (S3)
+//   POST /api/animals/:id/measurements  a reading; 409 + question when it looks like a slip (confirm_unusual to save)
+//   GET  /api/animals/:id/feeding     current food + history (S3)
+//   POST /api/animals/:id/feeding     change the food (the old one is closed with an end date)
+//   GET  /api/animals/:id/health      every vet record kind, medicines (+ derived current list), measurements (S4)
+//   POST /api/animals/:id/records/:kind                    add (Owner/Primary carer confirmed; Family proposed)
+//   POST /api/animals/:id/records/:kind/:rid/confirm|dispute|correct
+//   POST /api/animals/:id/medications                      a new medicine with its first event
+//   POST /api/animals/:id/medications/:mid/events          start again / dose change / stop
+//   GET  /api/animals/:id/timeline[?category=HEALTH]       every event with its source badge
+//   GET  /api/contacts, POST /api/contacts                 vet practice, emergency vet, ...
 //   GET  /api/habitats                Home, Garden, ...
 //   GET  /api/media/<sha>.jpg         a stored photo, only if it belongs to the caller's household
 // Anything else that is not /api/ is the web UI from web/dist.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { ensureAdminGrant, householdOf, requireHousehold } from './access.js';
+import { ensureAdminGrant, householdOf, requireHousehold, requireOn } from './access.js';
+import { addContact, listContacts } from './contacts.js';
+import { getFeeding, setFeeding } from './feeding.js';
+import { getHealth } from './health.js';
+import { addMeasurement, listMeasurements } from './measurements.js';
+import { addMedication, addMedicationEvent } from './medications.js';
+import { addRecord, confirmRecord, correctRecord, disputeRecord, isKind } from './records.js';
+import { getTimeline } from './timeline.js';
 import { createAnimal, getAnimal, listAnimals, mediaVisible, preparePhoto, setProfilePhoto, updateAnimal, type NewAnimal } from './animals.js';
 import { authOff, authorise, isProduction } from './auth.js';
 import { withTxn } from './db.js';
@@ -100,25 +118,74 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
         return send(res, 201, await withTxn(ws, false, (c) => createAnimal(c, ws, member, body)));
       }
     }
-    const one = /^\/api\/animals\/(\d{1,15})(\/photo)?$/.exec(path);
+    if (path === '/api/contacts') {
+      if (method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => listContacts(c)));
+      if (method === 'POST') {
+        const body = await readBody(req);
+        return send(res, 201, await withTxn(ws, false, (c) => addContact(c, ws, member, body)));
+      }
+    }
+    const one = /^\/api\/animals\/(\d{1,15})(?:\/([a-z_/0-9]+))?$/.exec(path);
     if (one) {
       const id = Number(one[1]);
-      if (!one[2] && method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => getAnimal(c, id, member)));
-      if (!one[2] && method === 'PATCH') {
+      const rest = one[2] ?? '';
+      const q = (k: string) => url.searchParams.get(k) ?? undefined;
+      // Every route below checks the caller's role on this animal inside its own function, before any read or write.
+      if (rest === '' && method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => getAnimal(c, id, member)));
+      if (rest === '' && method === 'PATCH') {
         const body = await readBody(req);
         return send(res, 200, await withTxn(ws, false, (c) => updateAnimal(c, id, member, body)));
       }
-      if (one[2] && method === 'POST') {
+      if (rest === 'photo' && method === 'POST') {
+        // The role is checked BEFORE the upload is read or decoded: a Viewer (or a stranger to this animal) never gets
+        // to make the engine decode an image (independent review, 2026-10-07). setProfilePhoto checks it again.
+        await withTxn(ws, true, (c) => requireOn(c, id, member, 'ADD_MEDIA'));
         const root = vaultRoot();
         const body = await readBody(req, PHOTO_MAX);
         const processed = await preparePhoto(body.dataBase64);
         return send(res, 200, await withTxn(ws, false, (c) => setProfilePhoto(c, ws, id, member, processed, root)));
       }
+      if (rest === 'measurements') {
+        if (method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => listMeasurements(c, id, member, q('measure'))));
+        if (method === 'POST') {
+          const body = await readBody(req);
+          return send(res, 201, await withTxn(ws, false, (c) => addMeasurement(c, ws, id, member, body)));
+        }
+      }
+      if (rest === 'feeding') {
+        if (method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => getFeeding(c, id, member)));
+        if (method === 'POST') {
+          const body = await readBody(req);
+          return send(res, 201, await withTxn(ws, false, (c) => setFeeding(c, ws, id, member, body)));
+        }
+      }
+      if (rest === 'health' && method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => getHealth(c, id, member)));
+      if (rest === 'timeline' && method === 'GET') return send(res, 200, await withTxn(ws, true, (c) => getTimeline(c, id, member, q('category'))));
+      if (rest === 'medications' && method === 'POST') {
+        const body = await readBody(req);
+        return send(res, 201, await withTxn(ws, false, (c) => addMedication(c, ws, id, member, body)));
+      }
+      const medEv = /^medications\/(\d{1,15})\/events$/.exec(rest);
+      if (medEv && method === 'POST') {
+        const body = await readBody(req);
+        return send(res, 201, await withTxn(ws, false, (c) => addMedicationEvent(c, ws, id, Number(medEv[1]), member, body)));
+      }
+      const rec = /^records\/([a-z_]+)(?:\/(\d{1,15})\/(confirm|dispute|correct))?$/.exec(rest);
+      if (rec && method === 'POST') {
+        const kind = rec[1];
+        if (!isKind(kind)) throw notFound('no such record kind');
+        const rid = rec[2] ? Number(rec[2]) : null;
+        const body = await readBody(req);
+        if (rid === null) return send(res, 201, await withTxn(ws, false, (c) => addRecord(c, ws, kind, id, member, body)));
+        if (rec[3] === 'confirm') return send(res, 200, await withTxn(ws, false, (c) => confirmRecord(c, kind, id, rid, member)));
+        if (rec[3] === 'dispute') return send(res, 200, await withTxn(ws, false, (c) => disputeRecord(c, kind, id, rid, member)));
+        return send(res, 201, await withTxn(ws, false, (c) => correctRecord(c, ws, kind, id, rid, member, body)));
+      }
     }
     return send(res, 404, { error: 'not found' });
   } catch (e) {
     const err = e instanceof PetopiaError ? e : fromPg(e);
-    if (err) return send(res, err.status, { error: err.message });
+    if (err) return send(res, err.status, { ...(err.extra ?? {}), error: err.message });
     console.error('petopia-engine: unhandled', e instanceof Error ? `${e.name}: ${e.message.replace(/\/[^\s:]+/g, '<path>')}` : 'non-error thrown');
     return send(res, 500, { error: 'internal error' });
   }
