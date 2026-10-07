@@ -1,6 +1,6 @@
 // The AI reader (spec sec 2 "AI reading", 5.2 "Assess"): ONE document per call, its TEXT only (images are OCR'd at home
 // first and never sent), no tools, JSON-schema output, validated with ajv before anything else looks at it.
-//   - claudeReader: `claude -p --tools "" --no-session-persistence --output-format json --json-schema ...`, the same
+//   - claudeReader: `claude -p --tools "" --strict-mcp-config --no-session-persistence --output-format json --json-schema ...`, the same
 //     wrapper Vitalis uses (Vitalis engine/src/insight.ts claudeModel). The host has no `claude` of its own; like
 //     Vitalis it runs inside the n8n container: PETOPIA_CLAUDE_CMD (default `docker exec -i -u node n8n claude`).
 //     Used ONLY when the folder's person has given their AI go-ahead (inbox.ts checks; sec 5.1, Q4).
@@ -118,6 +118,37 @@ export interface Reader {
 const run = promisify(execFile);
 export const claudeCommand = (): string[] => (process.env.PETOPIA_CLAUDE_CMD ?? '/usr/local/bin/docker exec -i -u node n8n claude').split(/\s+/).filter(Boolean);
 let cliVersion: string | null | undefined;
+let cliHelp: string | null | undefined;
+/** The CLI's own --help, read once: which isolation flags this version accepts. */
+async function claudeHelp(): Promise<string | null> {
+  if (cliHelp !== undefined) return cliHelp;
+  const [bin, ...pre] = claudeCommand();
+  try {
+    cliHelp = (await run(bin!, [...pre, '--help'], { timeout: 20_000 })).stdout;
+  } catch {
+    cliHelp = null;
+  }
+  return cliHelp;
+}
+
+/**
+ * The reader's arguments. Pure (tests pin them). `--tools ""` only switches off the BUILT-IN tools; the CLI runs inside
+ * the n8n container and would otherwise load THAT container's settings and MCP servers (~node/.claude, .mcp.json).
+ *   --strict-mcp-config        use only MCP servers from --mcp-config, and none is given: no MCP tools at all. Always
+ *                              passed; a CLI too old to know it fails the run (READER_FAILED -> "couldn't read"), which
+ *                              is the safe direction;
+ *   --disable-slash-commands   no skills / slash commands from the container's config; passed only when this CLI's
+ *                              --help lists it (Vitalis's insight.ts passes neither, so there is no estate precedent
+ *                              for which version is installed in n8n).
+ * KNOWN ITEM (independent review, finding 6): inspect the n8n container's ~node/.claude (settings.json hooks,
+ * permissions, CLAUDE.md, plugins) on the iMac -- hooks and CLAUDE.md are not covered by these flags.
+ */
+export function claudeArgs(model: string, help: string | null): string[] {
+  return [
+    '-p', '--tools', '', '--strict-mcp-config', ...(help?.includes('--disable-slash-commands') ? ['--disable-slash-commands'] : []),
+    '--no-session-persistence', '--output-format', 'json', '--json-schema', JSON.stringify(READER_SCHEMA), '--model', model,
+  ];
+}
 async function claudeVersion(): Promise<string | null> {
   if (cliVersion !== undefined) return cliVersion;
   const [bin, ...pre] = claudeCommand();
@@ -133,32 +164,34 @@ export function claudeReader(model = process.env.PETOPIA_READER_MODEL ?? 'sonnet
   const [bin, ...pre] = claudeCommand();
   return {
     kind: 'claude',
-    read: (pages) => new Promise((resolve, reject) => {
-      const child = spawn(bin!, [...pre, '-p', '--tools', '', '--no-session-persistence', '--output-format', 'json', '--json-schema', JSON.stringify(READER_SCHEMA), '--model', model],
-        { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'ignore'] });
-      let out = '';
-      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('READER_TIMEOUT')); }, 300_000);
-      child.stdout.on('data', (d: Buffer) => { out += d.toString(); if (out.length > 2_000_000) child.kill('SIGKILL'); });
-      child.on('error', () => { clearTimeout(timer); reject(new Error('READER_NOT_STARTED')); });
-      child.on('close', () => {
-        clearTimeout(timer);
-        void (async () => {
-          try {
-            const j = JSON.parse(out) as Record<string, unknown>;
-            if (j.is_error === true) return reject(new Error('READER_ERROR'));
-            const u = (j.usage ?? {}) as Record<string, unknown>;
-            const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
-            const output = j.structured_output && typeof j.structured_output === 'object'
-              ? j.structured_output
-              : JSON.parse((typeof j.result === 'string' ? j.result : '').split('\n').filter((l) => !/^\s*```/.test(l)).join('\n')) as unknown;
-            resolve({ output, model, cli_version: await claudeVersion(), usage: { input_tokens: num(u.input_tokens), output_tokens: num(u.output_tokens), cost_usd: num(j.total_cost_usd) } });
-          } catch {
-            reject(new Error('READER_UNREADABLE'));
-          }
-        })();
+    read: async (pages) => {
+      const args = claudeArgs(model, await claudeHelp());
+      return new Promise((resolve, reject) => {
+        const child = spawn(bin!, [...pre, ...args], { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'ignore'] });
+        let out = '';
+        const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('READER_TIMEOUT')); }, 300_000);
+        child.stdout.on('data', (d: Buffer) => { out += d.toString(); if (out.length > 2_000_000) child.kill('SIGKILL'); });
+        child.on('error', () => { clearTimeout(timer); reject(new Error('READER_NOT_STARTED')); });
+        child.on('close', () => {
+          clearTimeout(timer);
+          void (async () => {
+            try {
+              const j = JSON.parse(out) as Record<string, unknown>;
+              if (j.is_error === true) return reject(new Error('READER_ERROR'));
+              const u = (j.usage ?? {}) as Record<string, unknown>;
+              const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+              const output = j.structured_output && typeof j.structured_output === 'object'
+                ? j.structured_output
+                : JSON.parse((typeof j.result === 'string' ? j.result : '').split('\n').filter((l) => !/^\s*```/.test(l)).join('\n')) as unknown;
+              resolve({ output, model, cli_version: await claudeVersion(), usage: { input_tokens: num(u.input_tokens), output_tokens: num(u.output_tokens), cost_usd: num(j.total_cost_usd) } });
+            } catch {
+              reject(new Error('READER_UNREADABLE'));
+            }
+          })();
+        });
+        child.stdin.end(readerPrompt(pages));
       });
-      child.stdin.end(readerPrompt(pages));
-    }),
+    },
   };
 }
 

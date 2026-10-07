@@ -90,18 +90,50 @@ describe.skipIf(!URL_)('S7 household + roles (database, HTTP)', () => {
     expect(ROUTES.filter((r) => r.guard.kind === 'self').map((r) => r.path.source)).toEqual(['^\\/api\\/inbox\\/me\\/consent\\/withdraw$']);
   });
 
-  it('A27: walking the route table -- every mutating route refuses a Viewer (403), before reading the body', async () => {
+  it('A27: walking the route table -- every mutating route refuses a Viewer (403; 404 for an inbox item they may not see), before reading the body', async () => {
     const mutating = ROUTES.filter((r) => r.method !== 'GET' && r.guard.kind !== 'self');
     expect(mutating.length).toBeGreaterThanOrEqual(29);
     for (const r of mutating) {
       const path = samplePath(r.path, r.path.source.includes('inbox') ? item : cat);
       const res = await call(kim, r.method, path, { junk: true });
-      expect(res.status, `${r.method} ${path}`).toBe(403);
+      // an inbox item the Viewer may not see answers exactly like one that does not exist (finding 2)
+      expect(res.status, `${r.method} ${path}`).toBe(r.guard.kind === 'item' ? 404 : 403);
     }
     // and the Viewer can still look
     expect((await call(kim, 'GET', `/api/animals/${cat}`)).status).toBe(200);
     expect((await call(kim, 'GET', '/api/today')).status).toBe(200);
     expect((await call(kim, 'GET', '/api/household')).status).toBe(200);
+  });
+
+  it('finding 2: a Family member cannot act on, or read, someone else\'s document before it is checked -- 404, nothing learnt', async () => {
+    const other = await withTxn(A, false, async (c) => {
+      const d = (await c.query<{ id: number }>("INSERT INTO ingest.source_document (workspace_id, file_hash, vault_path, file_name, media_type, uploaded_by) VALUES ($1, $2, 'X/Pets/inbox/private-letter.txt', 'private-letter.txt', 'text/plain', $3) RETURNING source_document_id::int AS id", [A, 'c'.repeat(64), alex])).rows[0]!.id;
+      const id = (await c.query<{ id: number }>("INSERT INTO ingest.inbox_item (workspace_id, source_document_id, member_name, status) VALUES ($1, $2, $3, 'NEEDS_REVIEW') RETURNING inbox_item_id::int AS id", [A, d, alex])).rows[0]!.id;
+      await c.query("INSERT INTO ingest.extraction_run (workspace_id, inbox_item_id, method, status) VALUES ($1, $2, 'TEXT_LAYER', 'OK')", [A, id]);
+      await c.query("INSERT INTO ingest.page_text (workspace_id, inbox_item_id, extraction_run_id, page, text) SELECT $1, $2, max(extraction_run_id), 1, 'SECRET page text' FROM ingest.extraction_run WHERE inbox_item_id = $2", [A, id]);
+      return id;
+    });
+    const missing = 999_999_999;
+    for (const [method, path, body] of [
+      ['POST', `/api/inbox/${other}/decide`, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-01' }],
+      ['POST', `/api/inbox/${other}/decide`, { action: 'NOT_PET' }],
+      ['POST', `/api/inbox/${other}/retry`, {}],
+      ['POST', `/api/inbox/${other}/accept-all`, {}],
+      ['POST', `/api/inbox/${other}/file`, {}],
+      ['GET', `/api/inbox/${other}`, undefined],
+    ] as const) {
+      const r = await call(sam, method, path, body);
+      const gone = await call(sam, method, path.replace(String(other), String(missing)), body);
+      expect(r.status, `${method} ${path}`).toBe(404);
+      expect(r.body, `${method} ${path}`).toEqual(gone.body); // same answer as an id that does not exist
+      expect(JSON.stringify(r.body)).not.toMatch(/SECRET|private-letter/);
+    }
+    expect(JSON.stringify((await call(sam, 'GET', '/api/inbox')).body)).not.toContain('private-letter');
+    // nothing changed: still waiting for alex, undecided
+    const row = await withTxn(A, true, (c) => c.query('SELECT status, animal_id, decided_by FROM ingest.inbox_item WHERE inbox_item_id = $1', [other]));
+    expect(row.rows[0]).toEqual({ status: 'NEEDS_REVIEW', animal_id: null, decided_by: null });
+    // its own person still sees it
+    expect((await call(alex, 'GET', `/api/inbox/${other}`)).status).toBe(200);
   });
 
   it('S7 acceptance: Viewer cannot log care; a Family member\'s vet-record entry becomes a proposal', async () => {

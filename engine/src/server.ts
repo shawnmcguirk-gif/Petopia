@@ -27,7 +27,7 @@ import { listHabitats } from './habitats.js';
 import { getHealth } from './health.js';
 import { addHabitat, addMember, changeRole, household, removeMember } from './household.js';
 import {
-  acceptAllClean, addDocument, decide, documentFile, fileItem, getItem, itemAnimal, listItems, myInbox, retryRead, reviewProposal, setConsent, setFolder, waitingCount,
+  acceptAllClean, addDocument, decide, documentFile, fileItem, getItem, itemAnimal, listItems, myInbox, requireSeeItem, retryRead, reviewProposal, setConsent, setFolder, waitingCount,
   type InboxDeps,
 } from './inbox.js';
 import { addMeasurement, listMeasurements } from './measurements.js';
@@ -241,6 +241,7 @@ export async function checkGuard(c: Client, g: Guard, member: string, p: string[
     case 'manages': if (!(await managesAny(c, member))) throw forbidden('only an Owner or Primary carer can do that'); return;
     case 'admin': if (!isAdmin(member)) throw forbidden('only a household admin can do that'); return;
     case 'item': {
+      await requireSeeItem(c, Number(p[1]), member); // 404 first: someone who may not see it learns nothing (finding 2)
       const it = await itemAnimal(c, Number(p[1]));
       if (it.animal_id !== null) await requireOn(c, it.animal_id, member, g.action);
       else if (!(await canAny(c, member, g.action))) throw forbidden('your role does not allow that');

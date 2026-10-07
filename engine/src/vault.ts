@@ -3,8 +3,8 @@
 // never copied, never overwritten, never deleted. Every path is resolved inside VAULT_ROOT: no "..", no absolute path,
 // no symlink that leaves the root. The database stores the vault-relative path and the SHA-256, never the bytes.
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { access, link, lstat, mkdir, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { access, copyFile, link, lstat, mkdir, readdir, realpath, stat, unlink, utimes } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { bad, conflict } from './errors.js';
 
@@ -88,7 +88,13 @@ export async function listInbox(root: string, folder: string): Promise<string[]>
   return out.sort();
 }
 
-/** Moves a file inside the vault. Never overwrites; refuses to cross volumes. (Vitalis safeMove.) */
+/**
+ * Moves a file inside the vault. Never overwrites; refuses to cross volumes. (Vitalis safeMove.)
+ * A hard link is the move (it fails if the destination exists, atomically). Where links are not allowed the fallback is
+ * NOT rename(2), which silently replaces a destination that appeared after the check: it is an exclusive copy
+ * (COPYFILE_EXCL: fails if the destination exists), checked byte for byte by SHA-256, and only then is the inbox entry
+ * removed -- so a file already filed there is never overwritten (independent review, finding 9).
+ */
 export async function safeMove(root: string, fromRel: string, toRel: string): Promise<void> {
   const from = await resolveInside(root, fromRel);
   const to = await resolveInside(root, toRel);
@@ -101,7 +107,19 @@ export async function safeMove(root: string, fromRel: string, toRel: string): Pr
     if (code === 'EEXIST') throw conflict('a file with that name is already filed there');
     if (code === 'EXDEV') throw conflict('source and destination are on different volumes');
     if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EMLINK') {
-      await rename(from, to);
+      try {
+        await copyFile(from, to, constants.COPYFILE_EXCL);
+      } catch (e2) {
+        if ((e2 as { code?: string }).code === 'EEXIST') throw conflict('a file with that name is already filed there');
+        throw e2;
+      }
+      if ((await sha256File(from)) !== (await sha256File(to))) {
+        await unlink(to); // our own incomplete copy, never someone's file (the exclusive copy created it)
+        throw new Error('MOVE_COPY_MISMATCH');
+      }
+      const st = await stat(from);
+      await utimes(to, st.atime, st.mtime).catch(() => undefined);
+      await unlink(from);
       return;
     }
     throw e;

@@ -89,18 +89,21 @@ export async function addRoutine(c: Client, ws: number, animalId: number, member
     const d = await c.query<{ d: string[] }>('SELECT m.default_routines AS d FROM animal.animal a JOIN ref.species_module m ON m.code = a.module_code WHERE a.animal_id = $1', [animalId]);
     if (!(d.rows[0]?.d ?? []).includes(b.kind)) throw bad('that is not one of this species\' suggested routines');
   }
-  if (origin === 'VET_ADVICE') {
-    const src = b.source_table ? SOURCE_TABLES[b.source_table] : undefined;
-    if (!src || !b.source_id) throw bad('a routine from the vet\'s advice names the record it came from');
-    const ok = await c.query(`SELECT 1 FROM ${src.table} WHERE ${src.pk} = $1 AND animal_id = $2 AND status = 'CONFIRMED'`, [b.source_id, animalId]);
-    if (!ok.rowCount) throw bad('that record is not a confirmed record of this animal');
+  if (origin === 'VET_ADVICE' && (!b.source_table || !b.source_id)) throw bad('a routine from the vet\'s advice names the record it came from');
+  if (!!b.source_table !== !!b.source_id) throw bad('a source names both its kind of record and the record');
+  if (b.source_table && b.source_id) {
+    // Whatever the origin, a named source must exist and be THIS animal's (independent review, finding 12); the vet's
+    // advice must also be confirmed. A record marked "not right" is never a source.
+    const src = SOURCE_TABLES[b.source_table]!;
+    const ok = await c.query(`SELECT 1 FROM ${src.table} WHERE ${src.pk} = $1 AND animal_id = $2 AND ${origin === 'VET_ADVICE' ? "status = 'CONFIRMED'" : "status <> 'DISPUTED'"}`, [b.source_id, animalId]);
+    if (!ok.rowCount) throw bad(origin === 'VET_ADVICE' ? 'that record is not a confirmed record of this animal' : 'that record is not one of this animal\'s');
   }
   const dpt = b.doses_per_time === undefined || b.doses_per_time === null || b.doses_per_time === '' ? null : Number(b.doses_per_time);
   if (dpt !== null && (!Number.isFinite(dpt) || dpt <= 0 || dpt > 100)) throw bad('doses per time must be a positive number');
   const id = await insertRow(c, 'care.routine', 'routine_id', {
     workspace_id: ws, animal_id: animalId, kind: b.kind, title: b.title?.trim() || null, rrule: b.rrule, times: [...new Set(b.times ?? [])].sort(), medication_id: b.medication_id ?? null,
     doses_per_time: dpt, assigned_to: b.assigned_to?.trim() || null, remind: b.remind ?? 'TODAY', origin,
-    source_table: origin === 'VET_ADVICE' || b.source_table ? b.source_table ?? null : null, source_id: origin === 'VET_ADVICE' || b.source_table ? b.source_id ?? null : null,
+    source_table: b.source_table ?? null, source_id: b.source_table ? b.source_id ?? null : null,
     active_from: from, active_to: b.active_to ?? null, created_by: member,
   });
   return view((await c.query<RoutineRow>(`${ROUTINE_SQL} AND routine_id = $1`, [id])).rows[0]!, today);

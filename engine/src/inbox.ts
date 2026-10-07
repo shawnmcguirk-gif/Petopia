@@ -18,11 +18,11 @@ import { basename, dirname, extname } from 'node:path';
 import { can, managesAny, requireAny, requireOn, type Role, roleOn } from './access.js';
 import { todayIso } from './age.js';
 import { toId, withTxn, type Client } from './db.js';
-import { bad, conflict, forbidden, notFound } from './errors.js';
+import { PetopiaError, bad, conflict, forbidden, notFound } from './errors.js';
 import { extractDocument, type Extractor, type PageText } from './extract.js';
 import { fieldsFit, guardAnswer } from './guard.js';
 import { middayOf, moduleOfAnimal, previousReading } from './measurements.js';
-import { normalise, plausibility } from './measures.js';
+import { normalise, plausibility, type Plausibility } from './measures.js';
 import { insertRow } from './provenance.js';
 import { checkAnswer, DOC_KINDS, type FactKind, type Reader } from './reader.js';
 import { KINDS, recordColumns, type Kind } from './records.js';
@@ -73,7 +73,8 @@ export async function setFolder(c: Client, ws: number, member: string, body: unk
   const folder = (checkFolder(body).folder ?? (await myInbox(c, ws, member)).suggested_folder).trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$/.test(folder) || folder.includes('..')) throw bad('a folder name is letters, digits, spaces, dots, dashes or underscores');
   if (await bindingOf(c, ws, member)) throw conflict('you already have a Pets folder');
-  const taken = await c.query('SELECT 1 FROM core.vault_folder_binding WHERE vault_folder_name = $1', [folder]);
+  // macOS (the vault's disk) treats "Ryan" and "ryan" as ONE folder: compare case-insensitively (migration 014 enforces it).
+  const taken = await c.query('SELECT 1 FROM core.vault_folder_binding WHERE lower(vault_folder_name) = lower($1)', [folder]);
   if (taken.rowCount) throw conflict('that folder already belongs to someone else');
   await c.query('INSERT INTO core.vault_folder_binding (workspace_id, member_name, vault_folder_name, created_by) VALUES ($1, $2, $3, $2)', [ws, member, folder]);
   return myInbox(c, ws, member, localReader);
@@ -88,11 +89,17 @@ export async function setConsent(c: Client, ws: number, member: string, kind: 'F
   const b = await bindingOf(c, ws, member);
   if (!b) throw conflict('set up your Pets folder first');
   if (given) await requireAny(c, member, 'DROP_DOCUMENTS', 'a Viewer cannot add documents');
+  if (given && kind === 'AI_READING' && !b.go_ahead_at) throw conflict('first say yes to Petopia reading your Pets folder');
   const col = kind === 'FOLDER_READ' ? 'go_ahead' : 'ai_go_ahead';
   if (given) await c.query(`UPDATE core.vault_folder_binding SET ${col}_by = $3, ${col}_at = COALESCE(${col}_at, now()) WHERE workspace_id = $1 AND member_name = $2`, [ws, member, member]);
   else await c.query(`UPDATE core.vault_folder_binding SET ${col}_by = NULL, ${col}_at = NULL WHERE workspace_id = $1 AND member_name = $2`, [ws, member]);
   await c.query('INSERT INTO core.consent_event (workspace_id, member_name, kind, given, words_shown) VALUES ($1, $2, $3, $4, $5)',
     [ws, member, kind, given, kind === 'FOLDER_READ' ? folderWords(b.vault_folder_name) : AI_WORDS]);
+  if (!given && kind === 'FOLDER_READ' && b.ai_go_ahead_at) {
+    // No folder reading means no AI reading either: withdrawn too, and recorded as its own consent event.
+    await c.query('UPDATE core.vault_folder_binding SET ai_go_ahead_by = NULL, ai_go_ahead_at = NULL WHERE workspace_id = $1 AND member_name = $2', [ws, member]);
+    await c.query('INSERT INTO core.consent_event (workspace_id, member_name, kind, given, words_shown) VALUES ($1, $2, $3, false, $4)', [ws, member, 'AI_READING', AI_WORDS]);
+  }
   return myInbox(c, ws, member, localReader);
 }
 
@@ -145,17 +152,37 @@ export async function scanFolder(ws: number, deps: InboxDeps, b: Binding): Promi
   return rep;
 }
 
-/** DISCOVERED -> READ: the text of every page (text layer, else OCR at home). An unreadable file waits for a person. */
-export async function readText(ws: number, deps: InboxDeps, item: Item): Promise<void> {
-  const claimed = await withTxn(ws, false, async (c) => (await c.query("UPDATE ingest.inbox_item SET status = 'READ', updated_at = now() WHERE inbox_item_id = $1 AND status = 'DISCOVERED'", [item.id])).rowCount);
-  if (!claimed) return;
+/** SQL condition on inbox_item `i`: its folder's person has (still) given the go-ahead to read it. Checked at EVERY
+ *  stage -- sweep, read, assess -- so a withdrawal stops reading at once (independent review, finding 1). */
+const GO_AHEAD = 'EXISTS (SELECT 1 FROM core.vault_folder_binding b WHERE b.workspace_id = i.workspace_id AND b.member_name = i.member_name AND b.go_ahead_at IS NOT NULL)';
+const AI_GO_AHEAD = 'EXISTS (SELECT 1 FROM core.vault_folder_binding b WHERE b.workspace_id = i.workspace_id AND b.member_name = i.member_name AND b.go_ahead_at IS NOT NULL AND b.ai_go_ahead_at IS NOT NULL)';
+/** Inside the transaction that would KEEP what was read: is the go-ahead still there? Locks the item and its folder's
+ *  binding (FOR SHARE), so a withdrawal in flight either commits first and is seen here, or waits until this commits. */
+async function stillAllowed(c: Client, id: number, needAi: boolean): Promise<boolean> {
+  const r = await c.query(
+    `SELECT 1 FROM ingest.inbox_item i JOIN core.vault_folder_binding b ON b.workspace_id = i.workspace_id AND b.member_name = i.member_name
+      WHERE i.inbox_item_id = $1 AND b.go_ahead_at IS NOT NULL${needAi ? ' AND b.ai_go_ahead_at IS NOT NULL' : ''} FOR UPDATE OF i FOR SHARE OF b`, [id]);
+  return !!r.rowCount;
+}
+
+/** DISCOVERED -> READ: the text of every page (text layer, else OCR at home). An unreadable file waits for a person.
+ *  Returns false when nothing was read (no go-ahead, or it was withdrawn meanwhile). */
+export async function readText(ws: number, deps: InboxDeps, item: Item): Promise<boolean> {
+  const claimed = await withTxn(ws, false, async (c) => (await c.query(
+    `UPDATE ingest.inbox_item i SET status = 'READ', updated_at = now() WHERE inbox_item_id = $1 AND status = 'DISCOVERED' AND ${GO_AHEAD}`, [item.id])).rowCount);
+  if (!claimed) return false;
   let out;
   try {
     out = await extractDocument(deps.extractor, await resolveInside(deps.root, item.vault_path));
   } catch {
     out = { method: 'TEXT_LAYER' as const, status: 'FAILED' as const, pages: [] as PageText[], identity: null, error: 'READ_FAILED' };
   }
-  await withTxn(ws, false, async (c) => {
+  return withTxn(ws, false, async (c) => {
+    // the go-ahead was withdrawn while the file was being read: keep nothing of it, and put it back to wait
+    if (!(await stillAllowed(c, item.id, false))) {
+      await c.query("UPDATE ingest.inbox_item SET status = 'DISCOVERED', updated_at = now() WHERE inbox_item_id = $1 AND status = 'READ'", [item.id]);
+      return false;
+    }
     const run = await insertRow(c, 'ingest.extraction_run', 'extraction_run_id', {
       workspace_id: ws, inbox_item_id: item.id, method: out.method, status: out.status, model: out.identity?.model_name ?? null, pages: out.pages.length,
       errors: out.error ? out.error.split(deps.root).join('<vault>').slice(0, 200) : null,
@@ -165,6 +192,7 @@ export async function readText(ws: number, deps: InboxDeps, item: Item): Promise
       await c.query("UPDATE ingest.inbox_item SET status = 'NEEDS_REVIEW', flags = array_append(flags, $2), updated_at = now() WHERE inbox_item_id = $1",
         [item.id, isImage(item.file_name) ? 'NO_TEXT_FOUND' : 'UNREADABLE']);
     }
+    return true;
   });
 }
 
@@ -201,14 +229,18 @@ export async function matchAnimal(c: Client, a: { name: string | null; species: 
 export async function assess(ws: number, deps: InboxDeps, item: Item): Promise<'ASSESSED' | 'WAITING' | 'FAILED' | 'SKIPPED'> {
   const pre = await withTxn(ws, true, async (c) => ({ text: await latestPages(c, item.id), b: await bindingOf(c, ws, item.member_name) }));
   if (!pre.text) return 'SKIPPED';
-  const reader = chooseReader(!!pre.b?.ai_go_ahead_at, deps);
+  if (!pre.b?.go_ahead_at) return 'SKIPPED'; // folder go-ahead withdrawn: nothing more is read from it
+  const reader = chooseReader(!!pre.b.ai_go_ahead_at, deps);
   if (!reader) {
     // No go-ahead to send it to Claude and no local reader: it waits, unread (spec Q4). The person can enter it by hand.
     await withTxn(ws, false, (c) => c.query("UPDATE ingest.inbox_item SET flags = array_append(flags, 'AWAITING_AI_GO_AHEAD'), updated_at = now() WHERE inbox_item_id = $1 AND NOT ('AWAITING_AI_GO_AHEAD' = ANY(flags))", [item.id]));
     return 'WAITING';
   }
+  // The claim re-checks, in the same statement, the go-ahead this reader needs: a withdrawal that lands after `pre` was
+  // read still stops the document going to Claude (or to the local model, without the folder go-ahead).
   const claimed = await withTxn(ws, false, async (c) => (await c.query(
-    "UPDATE ingest.inbox_item SET status = 'ASSESSED', flags = array_remove(flags, 'AWAITING_AI_GO_AHEAD'), updated_at = now() WHERE inbox_item_id = $1 AND status = 'READ'", [item.id])).rowCount);
+    `UPDATE ingest.inbox_item i SET status = 'ASSESSED', flags = array_remove(flags, 'AWAITING_AI_GO_AHEAD'), updated_at = now()
+      WHERE inbox_item_id = $1 AND status = 'READ' AND ${reader.kind === 'claude' ? AI_GO_AHEAD : GO_AHEAD}`, [item.id])).rowCount);
   if (!claimed) return 'SKIPPED';
   const method = reader.kind === 'claude' ? 'LLM_PROPOSAL' : 'LOCAL_MODEL';
   let result;
@@ -232,7 +264,14 @@ export async function assess(ws: number, deps: InboxDeps, item: Item): Promise<'
     return 'FAILED';
   }
   const g = guardAnswer(checked.answer, pre.text.pages);
-  await withTxn(ws, false, async (c) => {
+  const kept = await withTxn(ws, false, async (c) => {
+    if (!(await stillAllowed(c, item.id, reader.kind === 'claude'))) {
+      // The go-ahead was withdrawn while the reader was working: nothing of its answer is kept (no values, no page
+      // references), only the run and its cost, and the document goes back to waiting (finding 1, in flight).
+      await insertRow(c, 'ingest.extraction_run', 'extraction_run_id', { workspace_id: ws, inbox_item_id: item.id, method, status: 'FAILED', errors: 'GO_AHEAD_WITHDRAWN', ...usage });
+      await c.query("UPDATE ingest.inbox_item SET status = 'READ', updated_at = now() WHERE inbox_item_id = $1 AND status = 'ASSESSED'", [item.id]);
+      return false;
+    }
     const run = await insertRow(c, 'ingest.extraction_run', 'extraction_run_id', {
       workspace_id: ws, inbox_item_id: item.id, method, status: 'OK', valid: true, dropped: g.dropped, pages: pre.text!.pages.length,
       errors: g.reasons.length ? [...new Set(g.reasons)].join(',') : null, ...usage,
@@ -251,8 +290,9 @@ export async function assess(ws: number, deps: InboxDeps, item: Item): Promise<'
       [item.id, animal, g.doc_kind, g.document_date, item.discovered_at, JSON.stringify(g.found), g.dropped, flags],
     );
     if (g.document_date) await c.query('UPDATE ingest.source_document SET document_date = $2, doc_kind = $3 WHERE source_document_id = $1', [item.doc, g.document_date, g.doc_kind]);
+    return true;
   });
-  return 'ASSESSED';
+  return kept ? 'ASSESSED' : 'SKIPPED';
 }
 
 export interface SweepReport { workspace_id: number; discovered: number; read: number; assessed: number; waiting: number; failed: number; filed: number }
@@ -267,9 +307,11 @@ export async function sweepWorkspace(ws: number, deps: InboxDeps): Promise<Sweep
     const bindings = await withTxn(null, true, async (c) => (await c.query<Binding & { workspace_id: string }>(
       'SELECT workspace_id::text, member_name, vault_folder_name, go_ahead_at::text, ai_go_ahead_at::text FROM core.vault_folder_binding WHERE workspace_id = $1 AND go_ahead_at IS NOT NULL ORDER BY binding_id', [ws])).rows);
     for (const b of bindings) rep.discovered += (await scanFolder(ws, deps, { ...b, workspace_id: ws })).discovered;
-    const items = await withTxn(ws, true, async (c) => (await c.query<Item>(`${ITEM_SQL} WHERE i.status IN ('DISCOVERED','FILED_PENDING') ORDER BY i.inbox_item_id`)).rows);
-    for (const it of items.filter((x) => x.status === 'DISCOVERED')) { await readText(ws, deps, it); rep.read++; }
-    const toAssess = await withTxn(ws, true, async (c) => (await c.query<Item>(`${ITEM_SQL} WHERE i.status = 'READ' ORDER BY i.inbox_item_id`)).rows);
+    // filing a document a person already checked is not reading it, so FILED_PENDING is finished whatever the go-ahead
+    const items = await withTxn(ws, true, async (c) => (await c.query<Item>(
+      `${ITEM_SQL} WHERE (i.status = 'DISCOVERED' AND ${GO_AHEAD}) OR i.status = 'FILED_PENDING' ORDER BY i.inbox_item_id`)).rows);
+    for (const it of items.filter((x) => x.status === 'DISCOVERED')) if (await readText(ws, deps, it)) rep.read++;
+    const toAssess = await withTxn(ws, true, async (c) => (await c.query<Item>(`${ITEM_SQL} WHERE i.status = 'READ' AND ${GO_AHEAD} ORDER BY i.inbox_item_id`)).rows);
     for (const it of toAssess) {
       const r = await assess(ws, deps, it);
       if (r === 'ASSESSED') rep.assessed++;
@@ -334,6 +376,15 @@ async function maySee(c: Client, member: string, it: { member_name: string; anim
   }
   return it.member_name === member || (await managesAny(c, member));
 }
+/** A by-id inbox route for someone who may not see the item answers exactly as for an id that does not exist: 404, with
+ *  nothing about the document in it (independent review, finding 2). Used by every by-id inbox function and route guard. */
+const NO_SUCH_ITEM = 'no such document in the inbox';
+async function mustSee(c: Client, member: string, it: { member_name: string; animal_id: number | null }): Promise<void> {
+  if (!(await maySee(c, member, it))) throw notFound(NO_SUCH_ITEM);
+}
+export async function requireSeeItem(c: Client, id: number, member: string): Promise<void> {
+  await mustSee(c, member, await itemAnimal(c, id));
+}
 
 export interface InboxRow { id: number; file_name: string; status: string; flags: string[]; member_name: string; animal_id: number | null; animal_proposed_id: number | null; doc_kind: string | null; doc_kind_proposed: string | null; document_date: string | null; dropped_count: number; proposals: number; discovered_at: string; filed_at: string | null }
 const ROW_COLS = `i.inbox_item_id::int AS id, d.file_name, i.status, i.flags, i.member_name, i.animal_id::int AS animal_id, i.animal_proposed_id::int AS animal_proposed_id,
@@ -358,13 +409,13 @@ type Loaded = InboxRow & { doc: number; vault_path: string; found: Record<string
 async function loadItem(c: Client, id: number, lock = false): Promise<Loaded> {
   const r = await c.query<Loaded>(
     `SELECT ${ROW_COLS}, d.source_document_id::int AS doc, d.vault_path, i.found, i.document_date_assumed, i.decided_by, i.filed_path ${FROM} WHERE i.inbox_item_id = $1${lock ? ' FOR UPDATE OF i' : ''}`, [id]);
-  if (!r.rows[0]) throw notFound('no such document in the inbox');
+  if (!r.rows[0]) throw notFound(NO_SUCH_ITEM);
   return r.rows[0];
 }
 
 export async function getItem(c: Client, id: number, member: string) {
   const it = await loadItem(c, id);
-  if (!(await maySee(c, member, it))) throw forbidden('you cannot see this document');
+  await mustSee(c, member, it);
   const text = await latestPages(c, id);
   const props = await c.query<ProposalView>(
     `SELECT proposal_id::int AS id, target, payload, corrected, page, quote, flags, status, decided_by, created_table, created_row_id::int AS created_row_id
@@ -389,14 +440,14 @@ export async function documentFile(c: Client, docId: number, member: string): Pr
       WHERE d.source_document_id = $1`, [docId]);
   const d = r.rows[0];
   if (!d) throw notFound('no such document');
-  if (!(await maySee(c, member, { member_name: d.member_name ?? '', animal_id: d.animal_id }))) throw forbidden('you cannot see this document');
+  if (!(await maySee(c, member, { member_name: d.member_name ?? '', animal_id: d.animal_id }))) throw notFound('no such document');
   return d;
 }
 
 /** The animal an item is about (decided, else proposed), for route guards. */
 export async function itemAnimal(c: Client, id: number): Promise<{ animal_id: number | null; member_name: string }> {
   const r = await c.query<{ animal_id: number | null; member_name: string }>('SELECT animal_id::int AS animal_id, member_name FROM ingest.inbox_item WHERE inbox_item_id = $1', [id]);
-  if (!r.rows[0]) throw notFound('no such document in the inbox');
+  if (!r.rows[0]) throw notFound(NO_SUCH_ITEM);
   return r.rows[0];
 }
 
@@ -410,6 +461,7 @@ const REVIEWABLE = ['NEEDS_REVIEW', 'ASSESS_FAILED', 'READ'];
 export async function decide(c: Client, id: number, member: string, body: unknown, today = todayIso()) {
   const b = checkDecide(body);
   const it = await loadItem(c, id, true);
+  await mustSee(c, member, it);
   if (!REVIEWABLE.includes(it.status)) throw conflict('this document has already been dealt with');
   if (b.action === 'NOT_PET') {
     // Not a pet document: nothing is read from it and it is not moved (the person removes it from their folder).
@@ -427,10 +479,12 @@ export async function decide(c: Client, id: number, member: string, body: unknow
     if (b.document_date > today) throw bad('a document date cannot be in the future');
     date = b.document_date;
   } else if (it.document_date_assumed || !date) throw bad('no date was printed on it: set the document date');
+  else if (it.flags.includes('DATE_ORDER_AMBIGUOUS')) throw bad('the date could be day/month or month/day: set the document date');
   await c.query(
     `UPDATE ingest.inbox_item SET animal_id = $2, doc_kind = $3, document_date = $4::date, document_date_assumed = false, decided_by = $5, decided_at = now(),
-            flags = array_remove(array_remove(flags, 'NEEDS_ANIMAL'), 'DATE_ASSUMED'), updated_at = now() WHERE inbox_item_id = $1`,
+            flags = array_remove(array_remove(array_remove(flags, 'NEEDS_ANIMAL'), 'DATE_ASSUMED'), 'DATE_ORDER_AMBIGUOUS'), updated_at = now() WHERE inbox_item_id = $1`,
     [id, b.animal_id, kind, date, member]);
+  await flagUnusualWeights(c, id, b.animal_id, date ?? today);
   if (b.action === 'KEEP_ONLY') {
     await c.query("UPDATE ingest.proposal SET status = 'DISMISSED', decided_by = $2, decided_at = now() WHERE inbox_item_id = $1 AND status = 'PROPOSED'", [id, member]);
     await c.query("UPDATE ingest.inbox_item SET flags = array_append(flags, 'KEEP_ONLY') WHERE inbox_item_id = $1 AND NOT ('KEEP_ONLY' = ANY(flags))", [id]);
@@ -440,23 +494,58 @@ export async function decide(c: Client, id: number, member: string, body: unknow
 
 // ======================================================================== review, step 2: the values
 
-const checkReview = bodyChecker<{ action: 'accept' | 'correct' | 'dismiss'; values?: Record<string, unknown> }>(S.object({
-  action: S.oneOf(['accept', 'correct', 'dismiss']), values: { type: 'object' },
+const checkReview = bodyChecker<{ action: 'accept' | 'correct' | 'dismiss'; values?: Record<string, unknown>; confirm_unusual?: boolean }>(S.object({
+  action: S.oneOf(['accept', 'correct', 'dismiss']), values: { type: 'object' }, confirm_unusual: { type: 'boolean' },
 }, ['action']));
+
+// ---- weights read from a document get the same plausibility question as a typed one (measurements.ts addMeasurement):
+// an unusual weight is FLAGGED (UNUSUAL_WEIGHT), is never taken by "accept all", and is accepted only when the person
+// answers the question with an explicit confirm_unusual -- recorded on the proposal as UNUSUAL_CONFIRMED with their name
+// (decided_by). Only that answer ever sets plausibility_confirmed on the row (independent review, finding 5).
+async function weightCheck(c: Client, animalId: number, v: Record<string, unknown>, docDate: string): Promise<Plausibility> {
+  try {
+    const on = str(v.on) ?? docDate;
+    return plausibility(normalise('weight', v.value, v.unit), await previousReading(c, animalId, 'weight', on), await moduleOfAnimal(c, animalId));
+  } catch {
+    return { ok: false, question: 'That weight could not be checked: correct it or set it aside.', suggestion: null };
+  }
+}
+/** Re-asks the question for every weight still waiting on this item (after step 1, and before "accept all"). */
+async function flagUnusualWeights(c: Client, itemId: number, animalId: number, docDate: string): Promise<void> {
+  const w = await c.query<{ id: number; payload: Record<string, unknown> }>("SELECT proposal_id::int AS id, payload FROM ingest.proposal WHERE inbox_item_id = $1 AND target = 'weight' AND status = 'PROPOSED'", [itemId]);
+  for (const p of w.rows) {
+    const ok = (await weightCheck(c, animalId, p.payload, docDate)).ok;
+    await c.query(`UPDATE ingest.proposal SET flags = ${ok ? "array_remove(flags, 'UNUSUAL_WEIGHT')" : "array_append(array_remove(flags, 'UNUSUAL_WEIGHT'), 'UNUSUAL_WEIGHT')"} WHERE proposal_id = $1`, [p.id]);
+  }
+}
 
 async function decidedItem(c: Client, id: number, member: string): Promise<Loaded> {
   const it = await loadItem(c, id, true);
+  await mustSee(c, member, it);
   if (!REVIEWABLE.includes(it.status)) throw conflict('this document has already been dealt with');
   if (it.animal_id === null || !it.decided_by) throw conflict('first say what the document is (step 1)');
   await requireOn(c, it.animal_id, member, 'DROP_DOCUMENTS');
   return it;
 }
 
-export async function reviewProposal(c: Client, id: number, pid: number, member: string, body: unknown) {
+export async function reviewProposal(c: Client, id: number, pid: number, member: string, body: unknown, today = todayIso()) {
   const b = checkReview(body);
-  await decidedItem(c, id, member);
-  const p = await c.query<{ target: string }>('SELECT target FROM ingest.proposal WHERE proposal_id = $1 AND inbox_item_id = $2 FOR UPDATE', [pid, id]);
+  const it = await decidedItem(c, id, member);
+  const p = await c.query<{ target: string; payload: Record<string, unknown> }>('SELECT target, payload FROM ingest.proposal WHERE proposal_id = $1 AND inbox_item_id = $2 FOR UPDATE', [pid, id]);
   if (!p.rows[0]) throw notFound('no such value on this document');
+  let weightFlags: string | null = null;
+  if (p.rows[0].target === 'weight' && b.action !== 'dismiss') {
+    const v = b.action === 'correct' ? (b.values ?? {}) : p.rows[0].payload;
+    const pl = await weightCheck(c, it.animal_id!, v, it.document_date ?? today);
+    if (!pl.ok && b.confirm_unusual !== true) {
+      // Nothing changes. The person answers "yes, that's right" (confirm_unusual) or corrects it -- as for a typed weight.
+      throw conflict(pl.question, { needs_confirmation: true, question: pl.question, suggestion: pl.suggestion, proposal_id: pid });
+    }
+    weightFlags = pl.ok
+      ? "array_remove(array_remove(flags, 'UNUSUAL_WEIGHT'), 'UNUSUAL_CONFIRMED')"
+      : "array_append(array_remove(flags, 'UNUSUAL_CONFIRMED'), 'UNUSUAL_CONFIRMED')";
+  }
+  const setFlags = weightFlags ? `, flags = ${weightFlags}` : '';
   if (b.action === 'correct') {
     const target = p.rows[0].target;
     const values = Object.fromEntries(Object.entries(b.values ?? {}).filter(([, v]) => v !== null && v !== ''));
@@ -464,16 +553,17 @@ export async function reviewProposal(c: Client, id: number, pid: number, member:
       ? typeof values.name === 'string' && Object.keys(values).every((k) => k === 'name' || k === 'phone')
       : fieldsFit(target as FactKind, Object.fromEntries(Object.entries(values).filter(([k]) => k !== 'cost_amount' && k !== 'cost_currency')));
     if (!fits) throw bad('those values do not fit this kind of entry');
-    await c.query("UPDATE ingest.proposal SET status = 'CORRECTED', corrected = $3, decided_by = $2, decided_at = now() WHERE proposal_id = $1", [pid, member, JSON.stringify(values)]);
+    await c.query(`UPDATE ingest.proposal SET status = 'CORRECTED', corrected = $3, decided_by = $2, decided_at = now()${setFlags} WHERE proposal_id = $1`, [pid, member, JSON.stringify(values)]);
   } else {
-    await c.query('UPDATE ingest.proposal SET status = $3, corrected = NULL, decided_by = $2, decided_at = now() WHERE proposal_id = $1', [pid, member, b.action === 'accept' ? 'ACCEPTED' : 'DISMISSED']);
+    await c.query(`UPDATE ingest.proposal SET status = $3, corrected = NULL, decided_by = $2, decided_at = now()${setFlags} WHERE proposal_id = $1`, [pid, member, b.action === 'accept' ? 'ACCEPTED' : 'DISMISSED']);
   }
   return getItem(c, id, member);
 }
 
 /** "Accept all that passed checks": every value still waiting that carries no warning flag. */
-export async function acceptAllClean(c: Client, id: number, member: string) {
-  await decidedItem(c, id, member);
+export async function acceptAllClean(c: Client, id: number, member: string, today = todayIso()) {
+  const it = await decidedItem(c, id, member);
+  await flagUnusualWeights(c, id, it.animal_id!, it.document_date ?? today); // an unusual weight is never accepted in bulk
   await c.query("UPDATE ingest.proposal SET status = 'ACCEPTED', decided_by = $2, decided_at = now() WHERE inbox_item_id = $1 AND status = 'PROPOSED' AND cardinality(flags) = 0", [id, member]);
   return getItem(c, id, member);
 }
@@ -523,10 +613,13 @@ async function writeFacts(c: Client, ws: number, it: Loaded, member: string, rol
     if (p.target === 'weight') {
       const on = str(v.on) ?? docDate;
       const nrm = normalise('weight', v.value, v.unit);
-      const pl = plausibility(nrm, await previousReading(c, animalId, 'weight', on), await moduleOfAnimal(c, animalId));
+      const pl = await weightCheck(c, animalId, v, docDate);
+      // the confirmed flag is the person's own answer, never set because the check failed
+      const answered = p.flags.includes('UNUSUAL_CONFIRMED');
+      if (!pl.ok && !answered) throw conflict(pl.question, { needs_confirmation: true, question: pl.question, suggestion: pl.suggestion, proposal_id: p.id });
       const row = await insertRow(c, 'health.measurement', 'measurement_id', {
         workspace_id: ws, animal_id: animalId, measure: 'weight', value: nrm.value.toString(), unit: nrm.unit, value_as_entered: nrm.entered.value.toString(), unit_as_entered: nrm.entered.unit,
-        observed_at: middayOf(on), time_precision: 'DAY', plausibility_confirmed: !pl.ok, created_by: member, ...prov,
+        observed_at: middayOf(on), time_precision: 'DAY', plausibility_confirmed: !pl.ok && answered, created_by: member, ...prov,
       });
       await promote('health.measurement', 'measurement_id', row);
       await done(p.id, 'health.measurement', row);
@@ -573,40 +666,69 @@ async function writeFacts(c: Client, ws: number, it: Loaded, member: string, rol
  * item stays FILED_PENDING (the rows are safe) and the sweep tries the move again.
  */
 export async function fileItem(ws: number, deps: InboxDeps, id: number, member: string, today = todayIso()) {
-  await withTxn(ws, false, async (c) => {
+  const asked = await withTxn(ws, false, async (c) => {
     const it = await decidedItem(c, id, member);
     const role = await requireOn(c, it.animal_id!, member, 'DROP_DOCUMENTS');
     const open = await c.query("SELECT 1 FROM ingest.proposal WHERE inbox_item_id = $1 AND status = 'PROPOSED' LIMIT 1", [id]);
     if (open.rowCount) throw conflict('some values are still waiting: accept, correct or dismiss each one');
+    // A weight accepted earlier may have become unusual since (a newer reading was added): back to waiting, flagged,
+    // so the person is asked -- committed, then refused below. Nothing is filed.
+    const ws_ = await c.query<{ id: number; payload: Record<string, unknown>; corrected: Record<string, unknown> | null; flags: string[] }>(
+      "SELECT proposal_id::int AS id, payload, corrected, flags FROM ingest.proposal WHERE inbox_item_id = $1 AND target = 'weight' AND status IN ('ACCEPTED','CORRECTED')", [id]);
+    let n = 0;
+    for (const w of ws_.rows) {
+      if (w.flags.includes('UNUSUAL_CONFIRMED') || (await weightCheck(c, it.animal_id!, w.corrected ?? w.payload, it.document_date ?? today)).ok) continue;
+      await c.query("UPDATE ingest.proposal SET status = 'PROPOSED', decided_by = NULL, decided_at = NULL, flags = array_append(array_remove(flags, 'UNUSUAL_WEIGHT'), 'UNUSUAL_WEIGHT') WHERE proposal_id = $1", [w.id]);
+      n++;
+    }
+    if (n) return true;
     await writeFacts(c, ws, it, member, role, today);
     const b = await bindingOf(c, ws, it.member_name);
     if (!b) throw conflict('the folder this document came from is no longer set up');
     const dest = filedPath(b.vault_folder_name, it.doc_kind ?? 'OTHER', it.file_name);
     await c.query("UPDATE ingest.inbox_item SET status = 'FILED_PENDING', filed_by = $2, filed_at = now(), filed_path = $3, updated_at = now() WHERE inbox_item_id = $1", [id, member, dest]);
+    return false;
   });
+  if (asked) throw conflict('a weight is very different from the last one: check it again before filing');
   await finishFiling(ws, deps, id);
   return withTxn(ws, true, (c) => getItem(c, id, member));
 }
 
-/** FILED_PENDING -> FILED: move the original (never overwriting), then record where it is. Returns true when filed. */
+/** FILED_PENDING -> FILED: move the original (never overwriting), then record where it is. Returns true when filed.
+ *  When the name is taken in the filed folder it is filed under a suffixed name (-<hash8>, then -<hash8>-2 ... -9),
+ *  recorded on the item (FILED_UNDER_NEW_NAME + filed_path). Any other failure flags MOVE_FAILED and the sweep tries
+ *  again every pass; the rows are already safe (independent review, finding 9). */
 export async function finishFiling(ws: number, deps: InboxDeps, id: number): Promise<boolean> {
   const it = await withTxn(ws, true, (c) => loadItem(c, id));
   if (it.status !== 'FILED_PENDING' || !it.filed_path) return false;
-  let dest = it.filed_path;
+  const hash = (await withTxn(ws, true, (c) => c.query<{ h: string }>('SELECT file_hash AS h FROM ingest.source_document WHERE source_document_id = $1', [it.doc]))).rows[0]!.h;
+  const ext = extname(it.filed_path);
+  const stem = it.filed_path.slice(0, it.filed_path.length - ext.length);
+  const candidates = [it.filed_path, `${stem}-${hash.slice(0, 8)}${ext}`, ...[2, 3, 4, 5, 6, 7, 8, 9].map((k) => `${stem}-${hash.slice(0, 8)}-${k}${ext}`)];
+  let dest: string | null = null;
   try {
-    if (await fileExists(await resolveInside(deps.root, dest))) {
-      const hash = (await withTxn(ws, true, (c) => c.query<{ h: string }>('SELECT file_hash AS h FROM ingest.source_document WHERE source_document_id = $1', [it.doc]))).rows[0]!.h;
-      const ext = extname(dest);
-      dest = `${dest.slice(0, dest.length - ext.length)}-${hash.slice(0, 8)}${ext}`;
+    for (const cand of candidates) {
+      if (await fileExists(await resolveInside(deps.root, cand))) continue;
+      try {
+        await safeMove(deps.root, it.vault_path, cand);
+        dest = cand;
+        break;
+      } catch (e) {
+        if (e instanceof PetopiaError && e.status === 409 && /already filed there/.test(e.message)) continue; // taken meanwhile: next name
+        throw e;
+      }
     }
-    await safeMove(deps.root, it.vault_path, dest);
+    if (dest === null) throw new Error('MOVE_NO_FREE_NAME');
   } catch {
     await withTxn(ws, false, (c) => c.query("UPDATE ingest.inbox_item SET flags = array_append(flags, 'MOVE_FAILED'), updated_at = now() WHERE inbox_item_id = $1 AND NOT ('MOVE_FAILED' = ANY(flags))", [id]));
     return false;
   }
+  const renamed = dest !== it.filed_path;
   await withTxn(ws, false, async (c) => {
     await c.query('UPDATE ingest.source_document SET vault_path = $2 WHERE source_document_id = $1', [it.doc, dest]);
-    await c.query("UPDATE ingest.inbox_item SET status = 'FILED', filed_path = $2, flags = array_remove(flags, 'MOVE_FAILED'), updated_at = now() WHERE inbox_item_id = $1", [id, dest]);
+    await c.query(
+      `UPDATE ingest.inbox_item SET status = 'FILED', filed_path = $2, flags = ${renamed ? "array_append(array_remove(array_remove(flags, 'MOVE_FAILED'), 'FILED_UNDER_NEW_NAME'), 'FILED_UNDER_NEW_NAME')" : "array_remove(flags, 'MOVE_FAILED')"},
+              updated_at = now() WHERE inbox_item_id = $1`, [id, dest]);
   });
   return true;
 }
@@ -614,8 +736,8 @@ export async function finishFiling(ws: number, deps: InboxDeps, id: number): Pro
 /** "Try reading it again" after a failed reader run: back to READ, so the next sweep (with the reader the person allows) tries once more. */
 export async function retryRead(c: Client, id: number, member: string) {
   const it = await loadItem(c, id, true);
+  await mustSee(c, member, it);
   if (it.status !== 'ASSESS_FAILED' && !(it.status === 'READ' && it.flags.includes('AWAITING_AI_GO_AHEAD'))) throw conflict('only a document that could not be read can be tried again');
-  if (!(await maySee(c, member, it))) throw forbidden('you cannot see this document');
   await c.query("UPDATE ingest.inbox_item SET status = 'READ', flags = array_remove(flags, 'AWAITING_AI_GO_AHEAD'), updated_at = now() WHERE inbox_item_id = $1", [id]);
   return getItem(c, id, member);
 }

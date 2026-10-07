@@ -179,4 +179,18 @@ describe.skipIf(!URL_)('S6 reminders + care log (database)', () => {
     const unset = await withTxn(null, true, (c) => c.query<{ n: number }>('SELECT ((SELECT count(*) FROM care.routine) + (SELECT count(*) FROM care.log) + (SELECT count(*) FROM care.appointment))::int AS n'));
     expect(unset.rows[0]!.n).toBe(0);
   });
+  it('finding 12: a routine that names a source must name a real record of THIS animal, whatever its origin', async () => {
+    const dog = (await inA((c) => createAnimal(c, A, alex, { name: 'Rusty', species: 'dog', born: '2020' }, T))).id;
+    await inA((c) => addRecord(c, A, 'vaccination', dog, alex, { vaccine: 'Kennel cough', given_on: '2026-09-01', source: 'VET_RECORD' }, T));
+    const rec = async (animal: number) => (await withTxn(A, true, (c) => c.query<{ id: number }>('SELECT vaccination_id::int AS id FROM health.vaccination WHERE animal_id = $1 ORDER BY vaccination_id LIMIT 1', [animal]))).rows[0]!.id;
+    const dogVac = await rec(dog);
+    const catVac = await rec(cat);
+    const add = (body: Record<string, unknown>) => inA((c) => care.addRoutine(c, A, cat, alex, { kind: 'VACCINATION', rrule: 'FREQ=YEARLY', ...body }, T));
+    await expect(add({ source_table: 'vaccination', source_id: dogVac })).rejects.toMatchObject({ status: 400 }); // Rusty's record on Biscuit's routine
+    await expect(add({ origin: 'SPECIES_DEFAULT', source_table: 'vaccination', source_id: dogVac })).rejects.toMatchObject({ status: 400 });
+    await expect(add({ source_table: 'vaccination', source_id: 999_999_999 })).rejects.toMatchObject({ status: 400 }); // no such record
+    await expect(add({ source_id: catVac })).rejects.toMatchObject({ status: 400 }); // an id without its kind
+    const ok = await add({ source_table: 'vaccination', source_id: catVac });
+    expect(ok).toMatchObject({ origin: 'MANUAL', source: { table: 'vaccination', id: catVac } });
+  });
 });

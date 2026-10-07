@@ -10,8 +10,13 @@ export function niceDate(d: string | null | undefined): string {
   return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
 }
 
-export const todayIso = (d = new Date()): string =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** Today's date in Ireland (Europe/Dublin), whatever the time zone of the machine running this: the household's day
+ *  turns over at midnight in Dublin, not at midnight on the server or the phone (independent review, finding 7). */
+const DUBLIN_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Dublin', year: 'numeric', month: '2-digit', day: '2-digit' });
+export function todayIso(d = new Date()): string {
+  const p = Object.fromEntries(DUBLIN_DAY.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
 
 /** "+0.2 kg" / "−0.1 kg" / "no change", or null when there is nothing to compare with. */
 export function changeText(change: string | null | undefined, unit: string): string | null {
