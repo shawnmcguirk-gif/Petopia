@@ -1,0 +1,21 @@
+# PROJECT.yaml — Petopia manifest (Axiom D14 scaffold, 2026-10-07). Read by
+# the sweep and the pipeline kit; maintained by sessions like any other
+# authority doc — this is a starting point, not a file to leave untouched.
+slug: petopia
+title: Petopia
+root: /Users/shawnmcguirk/dev/Petopia
+handoff: HANDOFF.md
+pipeline: HANDOFF.md          # file containing the "## Pipeline State" table
+design: DESIGN.md             # decision log
+kit: /Users/shawnmcguirk/dev/Axiom/kit/pipeline-kit.mjs
+conventions_version: 35          # Axiom D46 -- synced against kit/CONVENTIONS.md; bump when the project is re-synced to a newer version
+scaffold_version: 3             # Axiom D51 sec 7 -- scaffold drift baseline; kit/templates/SCAFFOLD-VERSION is canonical, bump when re-scaffolded/re-adopted
+capabilities:                 # free-text declarations; absence is a fact, not an error (D41 §14)
+  - pipeline_state
+  - design_log
+  - git
+  - house_rules
+  - readme
+  - handoff_history
+  - ideas_inbox
+stale_commit_days: 14

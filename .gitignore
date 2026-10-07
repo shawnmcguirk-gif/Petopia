@@ -1,0 +1,5 @@
+.oversight/*
+!.oversight/outbox/
+.oversight/outbox/*
+!.oversight/outbox/done/
+!.oversight/packs/
