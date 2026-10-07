@@ -26,6 +26,13 @@ Ryan: tapping Petopia showed the lock screen, then home. Cause: Synapse's PWA se
 
 **18:45 IST follow-up:** next, Ryan (signed in as `shawn`) got "not part of the household": `PETOPIA_ADMINS` was `Ryan`, but Synapse member names are lowercase (`shawn`, `ryan`) and the engine's match is exact (case-sensitive; Vitalis lowercases, Petopia does not). Set `PETOPIA_ADMINS=shawn,ryan` in `engine/.env` and the LaunchAgent plist, engine restarted; the household grant is created on the admin's next request. `core.access_grant` was empty before. Not yet confirmed on a phone. Open: make `adminsFromEnv`/`includes` case-insensitive like Vitalis.
 
+**RESUME HERE (wrap, 18:50 IST, Cowork/Sonnet 5.5):** D1 still reads **deploy**; Ryan has not yet said `ready`/`verified`.
+1. Ask Ryan: close/reopen Synapse, tap Petopia (should now open and be granted household access as `shawn`), add Banoffee + Benji, then `ready`/`verified` -> `kit advance`. If it still bounces to the lock screen, clear Synapse site data (old service worker).
+2. Owed, small: make `adminsFromEnv`/`admins.includes` case-insensitive (access.ts, household.ts; tests) and redeploy. Ryan was asked, not yet answered. Ask Ryan whether `ryan` should stay an admin alongside `shawn`.
+3. Everything else from the 15:40 entry below still stands (Q1-Q5, go-aheads, known-unproven list).
+4. Synapse tree has another session's UNCOMMITTED D44 review-fix edits (App.tsx, TodayView.tsx, AppShell.tsx); the live build was made from a clean HEAD export, so those are not shipped. Do not blindly `npm run build` in the Synapse tree expecting only committed code.
+5. CONVENTIONS sec 1 step 4 housekeeping sweep: asked at session start, no answer; not run.
+
 ## 2026-10-07 15:40 IST -- EXACT STATE (Cloud/Opus 5.5) -- READ THIS ENTRY FIRST
 
 **Stage:** Petopia D1 (Petopia core) reads **deploy** (`kit stage-line D1 --root Petopia`). Filed with `kit advance D1 deploy`, quoting Ryan's 01:32 pre-approval. Next word is Ryan's: `ready`, then `verified`.
