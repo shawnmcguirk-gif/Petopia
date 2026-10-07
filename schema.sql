@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict cecrNJ2I1kupoc3gI99Pfb9CQhjupKzVrZfWtGWCGx75HwDkfv3WBaQWgBOqVbo
+\restrict iXTD47XDgP61DlqtBx2CnxoBbWB9FAFcIrXKq8DZN9ENRGWx7TbEfrihRwguDR4
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -95,6 +95,11 @@ BEGIN
   END IF;
   IF (to_jsonb(NEW) - keep) IS DISTINCT FROM (to_jsonb(OLD) - keep) THEN
     RAISE EXCEPTION 'a recorded fact is never changed in place; correct it with a new row' USING ERRCODE = 'check_violation';
+  END IF;
+  IF (to_jsonb(OLD)->>'confirmed_by') IS NOT NULL
+     AND ((to_jsonb(NEW)->>'confirmed_by') IS DISTINCT FROM (to_jsonb(OLD)->>'confirmed_by')
+          OR (to_jsonb(NEW)->>'confirmed_at') IS DISTINCT FROM (to_jsonb(OLD)->>'confirmed_at')) THEN
+    RAISE EXCEPTION 'who confirmed a record, and when, never changes' USING ERRCODE = 'check_violation';
   END IF;
   IF 'to_on' = ANY (TG_ARGV) AND (to_jsonb(OLD)->>'to_on') IS NOT NULL AND (to_jsonb(NEW)->>'to_on') IS DISTINCT FROM (to_jsonb(OLD)->>'to_on') THEN
     RAISE EXCEPTION 'an ended entry stays ended' USING ERRCODE = 'check_violation';
@@ -2445,6 +2450,13 @@ CREATE UNIQUE INDEX uq_animal_role_current ON core.animal_role USING btree (work
 
 
 --
+-- Name: uq_binding_folder_ci; Type: INDEX; Schema: core; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_binding_folder_ci ON core.vault_folder_binding USING btree (lower(vault_folder_name));
+
+
+--
 -- Name: uq_feeding_plan_current; Type: INDEX; Schema: diet; Owner: -
 --
 
@@ -3725,5 +3737,5 @@ CREATE POLICY workspace_isolation ON media.item USING ((workspace_id = (NULLIF(c
 -- PostgreSQL database dump complete
 --
 
-\unrestrict cecrNJ2I1kupoc3gI99Pfb9CQhjupKzVrZfWtGWCGx75HwDkfv3WBaQWgBOqVbo
+\unrestrict iXTD47XDgP61DlqtBx2CnxoBbWB9FAFcIrXKq8DZN9ENRGWx7TbEfrihRwguDR4
 
