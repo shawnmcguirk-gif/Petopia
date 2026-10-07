@@ -1,9 +1,9 @@
 // The quote guard and the reader's answer checks (spec sec 5.2; S5, A20). Pure: no database, no model. Fictional
 // documents only ("Biscuit", a cat).
 import { describe, expect, it } from 'vitest';
-import { dateIn, fieldsFit, guardAnswer, normText, numTokens, unitIn } from '../src/guard.js';
+import { dateIn, fieldsFit, guardAnswer, normText, numTokens, unitIn, wordsIn } from '../src/guard.js';
 import { chooseReader, contentMatches } from '../src/inbox.js';
-import { checkAnswer, claudeArgs, readerPrompt, type Reader, type ReaderAnswer } from '../src/reader.js';
+import { checkAnswer, claudeArgs, claudeCommand, readerPrompt, type Reader, type ReaderAnswer } from '../src/reader.js';
 import { filedPath, safeFileName } from '../src/vault.js';
 
 const PAGE1 = `Riverside Veterinary Clinic   Tel 01 555 0101
@@ -119,7 +119,32 @@ Distemper / Parvo booster given 03/10/2026`;
     const ok = only({ kind: 'condition', page: 1, quote: 'Diagnosis: Chronic kidney disease, stage 2.', fields: { name: 'chronic KIDNEY disease', condition_status: 'ACTIVE' } });
     expect(ok.dropped).toBe(0); // case-insensitive; the coded status is the reader's label, not printed text
   });
-  it('a quote shorter than 8 characters proves nothing: "." for Cancer, "e" for Distemper are dropped', () => {
+  it('re-review: real short quotes pass ("6.1 kg", "Wt: 6kg", a "2/10/26" date); whole words only ("Cat" is not in "Category")', () => {
+    const short = [{ page: 1, text: `${PAGE1}\n6.1 kg\nWt: 6kg\nDate 2/10/26` }];
+    const w = (quote: string, value: string) => guardAnswer(answer({ facts: [{ kind: 'weight', page: 1, quote, fields: { value, unit: 'kg' } }] }), short);
+    expect(w('6.1 kg', '6.1')).toMatchObject({ dropped: 0 });
+    expect(w('6.1 kg', '6.1').facts.map((f) => f.kind)).toContain('weight');
+    expect(w('Wt: 6kg', '6')).toMatchObject({ dropped: 0 });
+    expect(w('Wt: 6kg', '6').facts.map((f) => f.kind)).toContain('weight');
+    const d = guardAnswer(answer({ document_date: { value: '2026-10-02', page: 1, quote: '2/10/26' } }), short);
+    expect(d.document_date).toBe('2026-10-02');
+    expect(d.flags).toContain('DATE_ORDER_AMBIGUOUS');
+    expect(wordsIn('Cat', 'Category: misc')).toBe(false);
+    expect(wordsIn('feline enteritis', 'Vaccination: Feline   enteritis next due')).toBe(true);
+    expect(wordsIn('Dr. Byrne (MVB)', 'Seen by Dr. Byrne (MVB) today')).toBe(true);
+  });
+  it('re-review: a non-required detail not in the quote is blanked and flagged, not the whole fact dropped', () => {
+    const g = only({ kind: 'vet_visit', page: 1, quote: 'Invoice date: 03/10/2026', fields: { visit_on: '2026-10-03', kind: 'ROUTINE', vet_name: 'Dr. Byrne', reason: 'Annual check' } });
+    expect(g.dropped).toBe(0);
+    const v = g.facts.find((f) => f.kind === 'vet_visit')!;
+    expect(v.fields).toMatchObject({ visit_on: '2026-10-03', kind: 'ROUTINE' });
+    expect(v.fields).not.toHaveProperty('vet_name');
+    expect(v.fields).not.toHaveProperty('reason');
+    expect(v.flags).toContain('FIELD_NOT_IN_QUOTE');
+    // a REQUIRED field (the vaccine) not in the quote still drops the fact
+    expect(only({ kind: 'vaccination', page: 1, quote: 'Vaccination: Feline enteritis  next due 03/10/2027', fields: { vaccine: 'Rabies' } }).reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
+  });
+  it('a quote shorter than 3 characters proves nothing: "." for Cancer, "e" for Distemper are dropped', () => {
     expect(only({ kind: 'condition', page: 1, quote: '.', fields: { name: 'Cancer' } }).reasons).toEqual(['QUOTE_TOO_SHORT']);
     expect(only({ kind: 'vaccination', page: 1, quote: 'e', fields: { vaccine: 'Distemper' } }).reasons).toEqual(['QUOTE_TOO_SHORT']);
     expect(only({ kind: 'vaccination', page: 1, quote: 'Distemper / Parvo booster given 03/10/2026', fields: { vaccine: 'Distemper' } }).dropped).toBe(0);
@@ -167,6 +192,10 @@ describe('finding 6: the Claude reader runs with no tools, no MCP servers and (w
     expect(old).not.toContain('--mcp-config');
     expect(claudeArgs('sonnet', '  --disable-slash-commands  Disable all skills')).toContain('--disable-slash-commands');
     expect(claudeArgs('sonnet', null)).toContain('--strict-mcp-config');
+    // the container's working directory is /tmp, not ~node (the spawn cwd only moves the host's docker process)
+    const saved = process.env.PETOPIA_CLAUDE_CMD;
+    delete process.env.PETOPIA_CLAUDE_CMD;
+    try { expect(claudeCommand().join(' ')).toContain('exec -i -u node -w /tmp n8n claude'); } finally { if (saved !== undefined) process.env.PETOPIA_CLAUDE_CMD = saved; }
   });
 });
 

@@ -376,6 +376,14 @@ async function maySee(c: Client, member: string, it: { member_name: string; anim
   }
   return it.member_name === member || (await managesAny(c, member));
 }
+/** Who may do step 1 on an item: its folder's person; else an Owner / Primary carer (of its animal, once it has one). */
+async function mayDecide(c: Client, member: string, it: { member_name: string; animal_id: number | null }): Promise<boolean> {
+  if (it.member_name === member) return true;
+  if (it.animal_id !== null) {
+    try { return can(await roleOn(c, it.animal_id, member), 'CONFIRM_RECORDS'); } catch { return false; }
+  }
+  return managesAny(c, member);
+}
 /** A by-id inbox route for someone who may not see the item answers exactly as for an id that does not exist: 404, with
  *  nothing about the document in it (independent review, finding 2). Used by every by-id inbox function and route guard. */
 const NO_SUCH_ITEM = 'no such document in the inbox';
@@ -463,9 +471,12 @@ export async function decide(c: Client, id: number, member: string, body: unknow
   const it = await loadItem(c, id, true);
   await mustSee(c, member, it);
   if (!REVIEWABLE.includes(it.status)) throw conflict('this document has already been dealt with');
+  // Step 1 (what is it, which animal, which date) is the folder's own person's, or an Owner / Primary carer's -- for an
+  // item already about an animal, of THAT animal. A Family member who may see it can check values and file it (step 2),
+  // but cannot re-run step 1 and move someone else's document onto another animal (re-review of the fixes).
+  if (!(await mayDecide(c, member, it))) throw forbidden('only the person who added it, or an Owner / Primary carer, can say what it is');
   if (b.action === 'NOT_PET') {
     // Not a pet document: nothing is read from it and it is not moved (the person removes it from their folder).
-    if (it.member_name !== member && !(await managesAny(c, member))) throw forbidden('only the person who added it, or an Owner / Primary carer, can set it aside');
     await c.query("UPDATE ingest.proposal SET status = 'DISMISSED', decided_by = $2, decided_at = now() WHERE inbox_item_id = $1 AND status = 'PROPOSED'", [id, member]);
     await c.query("UPDATE ingest.inbox_item SET status = 'IGNORED', decided_by = $2, decided_at = now(), updated_at = now() WHERE inbox_item_id = $1", [id, member]);
     return getItem(c, id, member);

@@ -4,10 +4,13 @@
 //   - a value with a number that is not a whole numeric token of its quote is DROPPED ("every number must be in its
 //     quote": a model cannot put 61 on screen when the page says 6.1);
 //   - a fact whose fields do not fit its kind (unknown field, wrong type) is DROPPED;
-//   - a quote shorter than MIN_QUOTE characters is DROPPED (a "." or an "e" is found on any page and proves nothing);
+//   - a quote shorter than MIN_QUOTE characters is DROPPED (a "." or an "e" is found on any page and proves nothing; a
+//     real short quote such as "6kg" or "6.1 kg" passes -- the value checks below do the real work);
 //   - a weight whose UNIT is not a whole word of its quote is DROPPED ("6.1 kg" against a quote saying "6.1 lb");
-//   - a fact with a text value (a vaccine, a condition, a dose unit ...) that is not in its quote is DROPPED
-//     (normalised, case-insensitive; enum codes such as ROUTINE / ACTIVE are the reader's labels, not printed text);
+//   - a text value (a vaccine, a condition, a vet's name ...) must be in its quote as whole words (normalised,
+//     case-insensitive: "Cat" is not in "Category"; enum codes such as ROUTINE / ACTIVE are the reader's labels, not
+//     printed text). One that is not is BLANKED and the fact FLAGGED FIELD_NOT_IN_QUOTE for a person to check; only
+//     when a REQUIRED field is blanked is the whole fact DROPPED (VALUE_NOT_IN_QUOTE);
 //   - a date must have its day, month and year in its quote (02/10/2026, 2 Oct 2026, 2026-10-02 ...). When the quote's
 //     numbers could be day/month OR month/day (03/10/2026), the value is FLAGGED DATE_ORDER_AMBIGUOUS for a person to
 //     check, never passed silently; a date whose day or month is not in the quote is flagged DATE_NOT_IN_QUOTE (a fact)
@@ -49,7 +52,7 @@ const DATE_FIELDS = new Set(['visit_on', 'follow_up_on', 'given_on', 'next_due_o
 /** Coded fields: the reader's label from a fixed list, not words printed on the page. `unit` is checked by unitIn. */
 const CODE_FIELDS = new Set(['kind', 'condition_status', 'certainty', 'substance_kind', 'unit']);
 /** A quote shorter than this proves nothing (finding: "Cancer" passed with the quote "."). */
-export const MIN_QUOTE = 8;
+export const MIN_QUOTE = 3;
 
 const S = { type: ['string', 'null'], maxLength: 400 };
 const D = { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
@@ -114,14 +117,18 @@ function numbersOk(fields: Record<string, unknown>, quote: string): boolean {
   return true;
 }
 const lc = (x: string): string => normText(x).toLowerCase();
-/** Every text value must be in its quote (normalised, case-insensitive). Numbers, dates and coded fields are checked elsewhere. */
-function textsOk(fields: Record<string, unknown>, quote: string): boolean {
-  const q = lc(quote);
-  for (const [k, v] of Object.entries(fields)) {
-    if (typeof v !== 'string' || NUMBER_FIELDS.has(k) || DATE_FIELDS.has(k) || CODE_FIELDS.has(k)) continue;
-    if (!q.includes(lc(v))) return false;
-  }
-  return true;
+const escapeRe = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Is `value` in `quote` as whole words (normalised, case-insensitive)? "Feline enteritis" yes; "Cat" in "Category" no. */
+export function wordsIn(value: string, quote: string): boolean {
+  const v = lc(value);
+  if (!v) return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(v)}(?![\\p{L}\\p{N}])`, 'u').test(lc(quote));
+}
+/** The text fields whose value is NOT in the quote. Numbers, dates and coded fields are checked elsewhere. */
+function textsMissing(fields: Record<string, unknown>, quote: string): string[] {
+  return Object.entries(fields)
+    .filter(([k, v]) => typeof v === 'string' && !NUMBER_FIELDS.has(k) && !DATE_FIELDS.has(k) && !CODE_FIELDS.has(k) && !wordsIn(v, quote))
+    .map(([k]) => k);
 }
 /** The ways a weight unit is printed. The unit must be a whole word of the quote ("6.1kg" counts; "kg" is not "g"). */
 const UNIT_WORDS: Record<string, string[]> = {
@@ -218,7 +225,7 @@ export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
   if (a.provider.name) {
     const r = quoteOk(pages, a.provider.page, a.provider.quote);
     if (r) drop(r);
-    else if (!lc(a.provider.quote!).includes(lc(a.provider.name))) drop('VALUE_NOT_IN_QUOTE');
+    else if (!wordsIn(a.provider.name, a.provider.quote!)) drop('VALUE_NOT_IN_QUOTE');
     else {
       const phoneOk = !a.provider.phone || numTokens(a.provider.phone).every((t) => numTokens(normText(a.provider.quote!)).includes(t));
       const fields = { name: a.provider.name.trim().slice(0, 120), phone: phoneOk ? a.provider.phone : null };
@@ -235,8 +242,14 @@ export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
     if (r) { drop(r); continue; }
     if (!numbersOk(fields, f.quote)) { drop('NUMBER_NOT_IN_QUOTE'); continue; }
     if (f.kind === 'weight' && (typeof fields.unit !== 'string' || !unitIn(fields.unit, f.quote))) { drop('UNIT_NOT_IN_QUOTE'); continue; }
-    if (!textsOk(fields, f.quote)) { drop('VALUE_NOT_IN_QUOTE'); continue; }
     const ff: string[] = [];
+    const missing = textsMissing(fields, f.quote);
+    if (missing.length) {
+      // blank only what the quote does not show; a fact that then lacks a required field is dropped
+      for (const k of missing) delete fields[k];
+      if (!fieldsFit(f.kind, fields)) { drop('VALUE_NOT_IN_QUOTE'); continue; }
+      ff.push('FIELD_NOT_IN_QUOTE');
+    }
     for (const [k, v] of Object.entries(fields)) {
       if (!DATE_FIELDS.has(k) || typeof v !== 'string') continue;
       const dc = dateIn(v, f.quote);

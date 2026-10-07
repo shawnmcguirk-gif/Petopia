@@ -2,7 +2,8 @@
 // first and never sent), no tools, JSON-schema output, validated with ajv before anything else looks at it.
 //   - claudeReader: `claude -p --tools "" --strict-mcp-config --no-session-persistence --output-format json --json-schema ...`, the same
 //     wrapper Vitalis uses (Vitalis engine/src/insight.ts claudeModel). The host has no `claude` of its own; like
-//     Vitalis it runs inside the n8n container: PETOPIA_CLAUDE_CMD (default `docker exec -i -u node n8n claude`).
+//     Vitalis it runs inside the n8n container: PETOPIA_CLAUDE_CMD (default `docker exec -i -u node -w /tmp n8n claude`: -w /tmp so no
+//     project CLAUDE.md / .claude / .mcp.json from the container's home directory is picked up).
 //     Used ONLY when the folder's person has given their AI go-ahead (inbox.ts checks; sec 5.1, Q4).
 //   - localReader: the fallback spec Q4 names -- a local Ollama model (OLLAMA_URL, private hosts only) with the same
 //     schema as Ollama's `format`. Off unless PETOPIA_LOCAL_READER_MODEL is set; with neither, documents stay unread
@@ -116,7 +117,7 @@ export interface Reader {
 // ---------------- the real readers (exercised only on the iMac) ----------------
 
 const run = promisify(execFile);
-export const claudeCommand = (): string[] => (process.env.PETOPIA_CLAUDE_CMD ?? '/usr/local/bin/docker exec -i -u node n8n claude').split(/\s+/).filter(Boolean);
+export const claudeCommand = (): string[] => (process.env.PETOPIA_CLAUDE_CMD ?? '/usr/local/bin/docker exec -i -u node -w /tmp n8n claude').split(/\s+/).filter(Boolean);
 let cliVersion: string | null | undefined;
 let cliHelp: string | null | undefined;
 /** The CLI's own --help, read once: which isolation flags this version accepts. */
@@ -140,8 +141,9 @@ async function claudeHelp(): Promise<string | null> {
  *   --disable-slash-commands   no skills / slash commands from the container's config; passed only when this CLI's
  *                              --help lists it (Vitalis's insight.ts passes neither, so there is no estate precedent
  *                              for which version is installed in n8n).
- * KNOWN ITEM (independent review, finding 6): inspect the n8n container's ~node/.claude (settings.json hooks,
- * permissions, CLAUDE.md, plugins) on the iMac -- hooks and CLAUDE.md are not covered by these flags.
+ * Finding 6, inspected on the iMac 2026-10-07 (CLI 2.1.226): ~node/.claude/settings.json holds only `theme` (no hooks,
+ * permissions or enabled plugins); no MCP servers in ~/.claude.json; no CLAUDE.md or .mcp.json in ~ . The spawn's
+ * `cwd` is the HOST docker process's, so the container working directory is set with `-w /tmp` in the command.
  */
 export function claudeArgs(model: string, help: string | null): string[] {
   return [

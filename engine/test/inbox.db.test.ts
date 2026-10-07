@@ -229,6 +229,10 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     // step 1 on alex's own document is alex's (or a manager's); once it is about Biscuit, a Family member may check and file it
     await expect(inA((c) => inbox.decide(c, img.id, sam, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T))).rejects.toMatchObject({ status: 404 });
     await inA((c) => inbox.decide(c, img.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T));
+    // ...but the Family member who can now see it cannot re-run step 1 on alex's document (re-review of the fixes)
+    for (const body of [{ action: 'PROCESS', animal_id: cat, doc_kind: 'OTHER', document_date: '2026-10-01' }, { action: 'NOT_PET' }]) {
+      await expect(inA((c) => inbox.decide(c, img.id, sam, body, T))).rejects.toMatchObject({ status: 403 });
+    }
     await acceptEverything(img.id, sam);
     const out = await inbox.fileItem(A, deps(), img.id, sam, T);
     expect(out.status).toBe('FILED');
