@@ -23,7 +23,7 @@ export function AnimalPage({ a, tab, onChange, reload }: { a: Animal; tab: Tab; 
         </div>
       </nav>
       {tab === 'overview' ? <Overview a={a} onChange={onChange} /> : (
-        <main className="mx-auto max-w-3xl px-4 pb-24 sm:px-6">
+        <main className="mx-auto max-w-3xl px-4 pb-28 sm:px-6">
           {tab === 'timeline' && <TimelineTab a={a} />}
           {tab === 'health' && <HealthTab a={a} onChanged={reload} />}
           {tab === 'care' && <CareTab a={a} onChanged={reload} />}

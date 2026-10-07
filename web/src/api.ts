@@ -74,7 +74,7 @@ export interface Animal {
   my_role: 'OWNER' | 'PRIMARY_CARER' | 'FAMILY' | 'VIEWER';
   can: string[];
 }
-export interface Me { member: string; household: { id: number } | null }
+export interface Me { member: string; household: { id: number } | null; admin?: boolean }
 export type NewAnimal = { name: string; species: string; breed?: string; born?: string; sex?: string; neuter_status?: string; colour_markings?: string; microchip?: string };
 
 // ---- S3 / S4 shapes (engine/src/feeding.ts, measurements.ts, records.ts, medications.ts, timeline.ts) ----
@@ -91,7 +91,7 @@ export interface CurrentMedicine { medication_id: number; product_name: string; 
 export interface Medicine { id: number; product_name: string; strength: string | null; form: string | null; current: boolean; events: MedEvent[] }
 export interface Medications { current: CurrentMedicine[]; medicines: Medicine[] }
 export interface Health { records: Record<string, RecordRow[]>; medications: Medications; measurements: Measurement[] }
-export interface TimelineEntry { on: string; sort_on: string; year: string; category: string; kind: string; label: string; title: string; detail: string | null; badge: Badge; ref: { table: string; id: number } }
+export interface TimelineEntry { on: string; sort_on: string; year: string; category: string; kind: string; label: string; title: string; detail: string | null; badge: Badge; ref: { table: string; id: number }; source?: { document_id: number; page: number | null } | null }
 
 /** The engine's 409 for an unusual reading: nothing was saved; the person is asked. */
 export class QuestionError extends ApiError {
@@ -108,4 +108,45 @@ export async function postAsking<T>(u: string, body: unknown): Promise<T> {
     throw new ApiError(409, j.error ?? 'request failed (409)');
   }
   return check<T>(r);
+}
+
+/** The original of a filed document, opened from a blob URL (an <a> cannot carry the device header). */
+export async function openDocument(documentId: number): Promise<void> {
+  const r = await fetch(url(`api/documents/${documentId}/file`), { headers: headers() });
+  if (!r.ok) throw new ApiError(r.status, ((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'the original could not be opened');
+  window.open(URL.createObjectURL(await r.blob()), '_blank', 'noopener');
+}
+
+// ---- S5 inbox (engine/src/inbox.ts) ----
+export interface MyInbox { folder: string | null; suggested_folder: string; inbox_path: string | null; reading: boolean; ai_reading: boolean; folder_words: string; ai_words: string; local_reader: boolean }
+export interface InboxRow { id: number; file_name: string; status: string; flags: string[]; member_name: string; animal_id: number | null; animal_proposed_id: number | null; doc_kind: string | null; doc_kind_proposed: string | null; document_date: string | null; dropped_count: number; proposals: number; discovered_at: string; filed_at: string | null }
+export interface InboxList { waiting: InboxRow[]; recent: InboxRow[] }
+export interface Proposal { id: number; target: string; payload: Record<string, string | number | null>; corrected: Record<string, string | number | null> | null; page: number; quote: string; flags: string[]; status: 'PROPOSED' | 'ACCEPTED' | 'CORRECTED' | 'DISMISSED'; decided_by: string | null; created_table: string | null; created_row_id: number | null }
+export interface InboxItem extends Omit<InboxRow, 'proposals'> {
+  document_id: number; found: { animal?: { name: string | null; species: string | null; microchip: string | null; page: number; quote: string }; document_date?: { value: string; page: number; quote: string }; provider?: { name: string; phone: string | null; page: number; quote: string }; costs?: { currency: string; total: string | null; lines: { description: string | null; amount: string; page: number; quote: string }[] } };
+  document_date_assumed: boolean; decided_by: string | null; filed_path: string | null; pages: { page: number; text: string }[]; read_by: string | null;
+  proposals: Proposal[]; runs: { method: string; status: string; model: string | null; dropped: number; at: string }[]; my_role: string | null; can_confirm: boolean;
+}
+
+// ---- S6 care (engine/src/care.ts) ----
+export interface AgendaItem { key: string; animal_id: number; animal: string; kind: string; title: string; due_on: string; time: string | null; overdue: boolean; days: number; detail: string | null; routine_id: number | null; can_log: boolean }
+export interface Today { today: AgendaItem[]; coming_up: AgendaItem[]; inbox_waiting?: number }
+export interface Routine { id: number; animal_id: number; kind: string; title: string; rrule: string; times: string[]; medication_id: number | null; doses_per_time: string | null; assigned_to: string | null; remind: string; origin: string; source: { table: string; id: number } | null; active_from: string; active_to: string | null; next_due: string | null }
+export interface Appointment { id: number; animal_id: number; starts_on: string; starts_time: string | null; contact_id: number | null; contact: string | null; reason: string | null; state: 'BOOKED' | 'CANCELLED'; calendar_state: 'SAVED' | 'ON_GOOGLE' | 'FAILED' | null; calendar_event_id: number | null; calendar_persona: string | null }
+export interface CareView {
+  routines: Routine[]; suggestions: { kind: string; title: string; rrule: string; times: string[] }[];
+  log: { id: number; kind: string; routine_id: number | null; due_on: string | null; due_slot: string; done_at: string; done_by: string; note: string | null }[];
+  appointments: Appointment[]; today: AgendaItem[]; coming_up: AgendaItem[];
+  supplies: { medication_id: number; product_name: string; quantity: number; given: number; days_left: number | null }[];
+}
+export interface LogResult { logged: boolean; by: string; at: string }
+
+// ---- S7 household (engine/src/household.ts) ----
+export type Role = Animal['my_role'];
+export interface Household {
+  me: { member: string; admin: boolean; manages: boolean };
+  members: { member_name: string; display_name: string | null; is_child: boolean; granted_at: string; granted_by: string; admin: boolean }[];
+  animals: { id: number; name: string; status: string; roles: { member_name: string; role: Role; explicit: boolean }[] }[];
+  habitats: { id: number; name: string; kind: string; parent_id: number | null }[];
+  contacts: Contact[];
 }

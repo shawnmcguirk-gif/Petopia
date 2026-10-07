@@ -1,9 +1,10 @@
 // Care & food (spec sec 8.3; S3, A15): the current food and its history. Changing the food never overwrites -- the
 // engine ends the old plan on the day the new one starts and both stay visible here. Owner / Primary carer change it;
-// everyone else sees it. Routines and the care log arrive with S6.
+// everyone else sees it. Routines, today's care, the care log and vet appointments (S6) come first (Routines.tsx).
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ApiError, get, post, type Animal, type FeedingState } from './api';
 import { niceDate, todayIso } from './format';
+import { CareSection } from './Routines';
 import { AddButton, BadgeChip, Card, ErrorText, Field, Panel, Section } from './ui';
 import { FOOD_TYPE_WORDS, foodLine } from './words';
 
@@ -24,6 +25,7 @@ export function CareTab({ a, onChanged }: { a: Animal; onChanged: () => void }) 
   const cur = state.current;
   return (
     <div>
+      <CareSection a={a} onChanged={onChanged} />
       <Section title="Food" action={canChange && !open ? <AddButton label={cur ? 'Change food' : 'Add food'} onClick={() => setOpen(true)} /> : undefined}>
         {open && <FoodForm a={a} current={!!cur} onClose={() => setOpen(false)} onSaved={(s) => { setState(s); setOpen(false); onChanged(); }} />}
         {cur ? (

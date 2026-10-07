@@ -1,7 +1,7 @@
 // An animal's Timeline (spec sec 3.6, 9.4; S4, A19): every event, newest first, under year headers, each with its
 // source badge. Filters: All · Health · Food · Weight (Care and Memories arrive with S6 / v1.1).
 import { useEffect, useState } from 'react';
-import { ApiError, get, type Animal, type TimelineEntry } from './api';
+import { ApiError, get, openDocument, type Animal, type TimelineEntry } from './api';
 import { niceDate } from './format';
 import { BadgeChip, Card, ErrorText } from './ui';
 
@@ -44,6 +44,11 @@ export function TimelineTab({ a }: { a: Animal }) {
                   <p className="m-0 text-[13px] text-ink-2">{niceDate(e.on)} · {e.label}</p>
                   <p className="m-0 font-semibold">{e.title}</p>
                   {e.detail && <p className="m-0 text-[15px] text-ink-2">{e.detail.replace(/^next due (\d{4}-\d{2}-\d{2})$/, (_, d: string) => `next due ${niceDate(d)}`)}</p>}
+                  {e.source && (
+                    <button type="button" className="m-0 mt-1 border-0 bg-transparent p-0 text-[13px] text-gold underline" onClick={() => void openDocument(e.source!.document_id).catch(() => setError('The original could not be opened.'))}>
+                      From the document{e.source.page ? `, page ${e.source.page}` : ''}
+                    </button>
+                  )}
                 </div>
                 <BadgeChip badge={e.badge} />
               </article>

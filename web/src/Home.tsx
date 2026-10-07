@@ -1,17 +1,27 @@
-// Home (spec sec 9.3): hero, then Our Pets. Sections with nothing real to show are hidden; Today, Coming Up and Inbox
-// arrive with their slices (S5, S6). With no animals yet, a single invitation to add the first one.
-import { Plus } from 'lucide-react';
-import type { Animal } from './api';
+// Home (spec sec 9.3): hero, Our Pets, Today, Coming Up, Inbox waiting. Sections with nothing real to show are hidden.
+// With no animals yet, a single invitation to add the first one.
+import { Inbox, Plus, Users } from 'lucide-react';
+import { AgendaList } from './Agenda';
+import type { Animal, Today } from './api';
 import { AnimalCard } from './AnimalCard';
 import { Hero } from './Hero';
 
-export function Home({ animals }: { animals: Animal[] }) {
+function Waiting({ n }: { n: number }) {
+  return (
+    <a href="#/inbox" className="mt-10 flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-4 text-ink no-underline">
+      <Inbox aria-hidden className="h-6 w-6 text-gold" strokeWidth={1.75} />
+      <span className="font-semibold">{n === 1 ? '1 document to check' : `${n} documents to check`}</span>
+    </a>
+  );
+}
+
+export function Home({ animals, agenda = null, onRefresh }: { animals: Animal[]; agenda?: Today | null; onRefresh?: () => void }) {
   const active = animals.filter((a) => a.status === 'ACTIVE');
   const past = animals.filter((a) => a.status !== 'ACTIVE');
   return (
     <div>
       <Hero />
-      <main className="mx-auto -mt-6 max-w-5xl px-4 pb-16 sm:px-6">
+      <main className="mx-auto -mt-6 max-w-5xl px-4 pb-28 sm:px-6">
         {animals.length === 0 ? (
           <section className="relative rounded-3xl border border-line bg-surface p-6 text-center shadow-[var(--shadow)] sm:p-10">
             <h2 className="name m-0 text-3xl">Who shares your home?</h2>
@@ -37,6 +47,19 @@ export function Home({ animals }: { animals: Animal[] }) {
                 <a href="#/add" className="btn no-underline"><Plus aria-hidden className="h-5 w-5" strokeWidth={1.75} />Add an animal</a>
               </div>
             )}
+            {agenda && agenda.today.length > 0 && (
+              <section aria-labelledby="today" className="mt-12">
+                <h2 id="today" className="name m-0 mb-4 text-[26px]">Today</h2>
+                <AgendaList items={agenda.today} onDone={onRefresh} done />
+              </section>
+            )}
+            {agenda && agenda.coming_up.length > 0 && (
+              <section aria-labelledby="coming-up" className="mt-12">
+                <h2 id="coming-up" className="name m-0 mb-4 text-[26px]">Coming Up</h2>
+                <AgendaList items={agenda.coming_up} />
+              </section>
+            )}
+            {!!agenda?.inbox_waiting && <Waiting n={agenda.inbox_waiting} />}
             {past.length > 0 && (
               <section aria-labelledby="remembered" className="mt-12">
                 <h2 id="remembered" className="name m-0 mb-4 text-2xl text-ink-2">Remembered and rehomed</h2>
@@ -45,6 +68,7 @@ export function Home({ animals }: { animals: Animal[] }) {
             )}
           </>
         )}
+        <p className="mt-12 text-center"><a href="#/household" className="inline-flex items-center gap-2 text-[15px] text-ink-2 no-underline"><Users aria-hidden className="h-4 w-4" strokeWidth={1.75} />Household</a></p>
       </main>
     </div>
   );

@@ -1,8 +1,13 @@
-// Petopia web shell (spec sec 8, 9; slices S2-S4): Home, Add animal, an animal's tabs (Overview, Timeline, Health,
-// Care & food). Everything it shows comes from
+// Petopia web shell (spec sec 8, 9; slices S2-S7): Home (Our Pets, Today, Coming Up, Inbox waiting), Animals, Inbox,
+// Household, Add animal, an animal's tabs (Overview, Timeline, Health, Care & food). Everything it shows comes from
 // the engine; who may do what is decided there and only reflected here.
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError, get, type Animal, type Me } from './api';
+import { ApiError, get, type Animal, type Me, type Today } from './api';
+import { AnimalsScreen } from './Animals';
+import { HouseholdScreen } from './Household';
+import { InboxScreen } from './Inbox';
+import { InboxItemPage } from './InboxItem';
+import { Nav } from './Nav';
 import { AnimalForm } from './AnimalForm';
 import { Hero } from './Hero';
 import { Home } from './Home';
@@ -29,16 +34,26 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
 export function App() {
   const route = useRoute();
   const [load, setLoad] = useState<Load>({ state: 'loading' });
+  const [agenda, setAgenda] = useState<Today | null>(null);
+  const refreshAgenda = useCallback(async () => {
+    try {
+      const t = await get<Today>('api/today');
+      setAgenda(t && Array.isArray(t.today) && Array.isArray(t.coming_up) ? t : null);
+    } catch {
+      setAgenda(null); // Today / Coming Up are extras on Home: without them Home still works
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
       const me = await get<Me>('api/me');
       const animals = me.household ? await get<Animal[]>('api/animals') : [];
       setLoad({ state: 'ready', me, animals });
+      if (me.household) void refreshAgenda();
     } catch (e) {
       setLoad({ state: 'error', status: e instanceof ApiError ? e.status : 0, message: e instanceof Error ? e.message : 'unknown' });
     }
-  }, []);
+  }, [refreshAgenda]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const put = (a: Animal) =>
@@ -52,13 +67,20 @@ export function App() {
   }
   if (!load.me.household) return <Notice title="Not part of the household yet">You’re signed in as {load.me.member}, but Petopia hasn’t been shared with you yet.</Notice>;
 
-  if (route.name === 'add') return <><TopBar title="Add an animal" /><AnimalForm onSaved={put} /></>;
+  const nav = <Nav route={route} waiting={agenda?.inbox_waiting ?? 0} />;
+  const animals = load.animals;
+  const changed = () => { void refreshAgenda(); };
+  if (route.name === 'add') return <><TopBar title="Add an animal" /><AnimalForm onSaved={put} />{nav}</>;
+  if (route.name === 'animals') return <><TopBar title="Animals" /><AnimalsScreen animals={animals} />{nav}</>;
+  if (route.name === 'inbox') return <><TopBar title="Inbox" /><InboxScreen animals={animals} onChanged={changed} />{nav}</>;
+  if (route.name === 'inbox-item') return <><TopBar title="Check a document" back="#/inbox" /><InboxItemPage id={route.id} animals={animals} onChanged={() => { changed(); void refresh(); }} />{nav}</>;
+  if (route.name === 'household') return <><TopBar title="Household" /><HouseholdScreen animals={animals} onChanged={() => void refresh()} />{nav}</>;
   if (route.name === 'animal' || route.name === 'edit') {
-    const a = load.animals.find((x) => x.id === route.id);
-    if (!a) return <><TopBar title="Not found" /><p className="mx-auto max-w-xl px-4 pt-8 text-ink-2">That animal isn’t in this household.</p></>;
-    if (route.name === 'edit') return <><TopBar title={`Edit ${a.name}`} back={`#/animals/${a.id}`} /><AnimalForm existing={a} onSaved={(n) => { put(n); go(`/animals/${n.id}`); }} /></>;
-    const reload = () => { void get<Animal>(`api/animals/${a.id}`).then(put).catch(() => undefined); };
-    return <><TopBar title={a.name} /><AnimalPage a={a} tab={route.tab} onChange={put} reload={reload} /></>;
+    const a = animals.find((x) => x.id === route.id);
+    if (!a) return <><TopBar title="Not found" /><p className="mx-auto max-w-xl px-4 pt-8 text-ink-2">That animal isn’t in this household.</p>{nav}</>;
+    if (route.name === 'edit') return <><TopBar title={`Edit ${a.name}`} back={`#/animals/${a.id}`} /><AnimalForm existing={a} onSaved={(n) => { put(n); go(`/animals/${n.id}`); }} />{nav}</>;
+    const reload = () => { void get<Animal>(`api/animals/${a.id}`).then(put).catch(() => undefined); changed(); };
+    return <><TopBar title={a.name} back="#/animals" /><AnimalPage a={a} tab={route.tab} onChange={put} reload={reload} />{nav}</>;
   }
-  return <Home animals={load.animals} />;
+  return <><Home animals={animals} agenda={agenda} onRefresh={changed} />{nav}</>;
 }
