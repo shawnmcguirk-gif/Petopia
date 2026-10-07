@@ -82,7 +82,7 @@ timestamp, e.g.:
 
 ## Decisions
 
-### D1: Petopia core -- pets, care records, document inbox, reminders, Synapse menu -- [Spec'd 2026-10-07T00:48:32Z -- was: Briefed 2026-10-07T00:41:59Z]
+### D1: Petopia core -- pets, care records, document inbox, reminders, Synapse menu -- [Built 2026-10-07T14:22:24Z -- was: Spec'd 2026-10-07T00:48:32Z]
 
 Lifted from `docs/concepts/2026-10-07-petopia/` (Ryan's brief frozen in `REQUEST.md`; hero art in `reference/`).
 D1's own file: `docs/specs/D1-petopia-core.md` (Opus draft 1, 781 lines, NOT yet independently cold-read).

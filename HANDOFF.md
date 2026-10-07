@@ -18,9 +18,27 @@ full grammar and vocabulary.
 
 | Thread | Last stage completed | Next expected stage | Notes |
 |---|---|---|---|
-| D1 Petopia core | [Spec'd 2026-10-07T01:20:34Z] stage-render (D51) | review | **2026-10-07 (Cowork/Sonnet, Ryan):** lifted from concept `2026-10-07-petopia`; spec draft 1 by Opus in `docs/specs/D1-petopia-core.md`. Nothing built yet. |
+| D1 Petopia core | [Built 2026-10-07T14:22:24Z] stage-render (D51) | install | **2026-10-07 15:40 IST (Cloud/Opus 5.5):** all v1 slices S1-S7 + every review fix deployed (main 61e5b21 after the wrap batch); fresh independent review READY WITH NOTES. Waiting on Ryan: try it on his phone, then say `ready`/`verified`. See the top entry below. |
 
-## 2026-10-07 14:50 IST -- EXACT STATE AT PAUSE (Cowork/Sonnet 5.5, Ryan's session) -- READ THIS ENTRY FIRST
+## 2026-10-07 15:40 IST -- EXACT STATE (Cloud/Opus 5.5) -- READ THIS ENTRY FIRST
+
+**Stage:** Petopia D1 (Petopia core) reads **deploy** (`kit stage-line D1 --root Petopia`). Filed with `kit advance D1 deploy`, quoting Ryan's 01:32 pre-approval. Next word is Ryan's: `ready`, then `verified`.
+
+**Done this session:**
+- WIP branch verified: lint/build/tests green in the VM, with DB tests on a real Postgres 16 (embedded-postgres; harness at `$HOME/pg` in the bridge VM -- `withpg.sh` + `setup.mjs`; processes don't survive between device_bash calls).
+- Finding 1 gap closed: an answer back from Claude after a mid-call withdrawal is no longer kept (`stillAllowed`, item + binding locked).
+- Merged and deployed: b6f1926 (fixes 1-9, 11, 12) + 014 live, then 9e67351, c5d7c29 and 61e5b21 (re-review follow-ups: step 1 is the folder person's or the animal's Owner/Primary carer's; quote guard min 3; blank-and-flag a missing detail instead of dropping the fact; whole-word match; `-w /tmp` for the container's claude; one-char lab values).
+- Each deploy went through the Axiom runner from a git bundle in `Axiom/runner/scratch/`. All 170 engine tests (real iMac Postgres) + 37 web tests passed; 401/401 checks passed; Caddy, Vitalis and Epicure were all fine. DB backup: `~/.petopia-backups/petopia-pre-014.sql`.
+- Finding 6 container inspected live: clean (details in the review file).
+- Fresh independent review (separate Opus agent, 3 rounds): **READY WITH NOTES** -- `docs/reviews/2026-10-07-review-fixes-review.md` (open notes + one deliberate known item listed at its end).
+
+**RESUME HERE:**
+1. Ask Ryan to open Synapse > Petopia on his phone, add Banoffee and Benji, look around, then say `ready` (deployed, he's checking) / `verified` (checked, close it). Run `kit advance` with his words.
+2. Folder-read / AI-reading go-aheads: the fixes are live, so they may now be given -- Ryan's call, in the app. The first live A20 run with a real vet document is the real test of the quote guard (watch for over-eager drops).
+3. Still open for Ryan (defaults in spec sec 13): Q1 Benji breed/age, Q2 who owns each pet, Q3 inbox folder, Q4 AI-reading go-ahead, Q5 Synapse feature-vocabulary migration 059 + two n8n edits.
+4. Known-unproven on the real machine: a live `claude -p` call + schema acceptance, glm-ocr, vault folders, the calendar push.
+
+## 2026-10-07 14:50 IST -- EXACT STATE AT PAUSE (Cowork/Sonnet 5.5, Ryan's session) -- SUPERSEDED by the 15:40 entry above
 
 **Stage:** D1 reads **review** (`kit stage-line D1 --root Petopia`). ALL v1 slices S1-S7 are built and DEPLOYED (main @ `5c5d603`, pushed). Nobody has verified it on a phone yet.
 
