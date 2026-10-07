@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Animal, Health, TimelineEntry } from './api';
 import { AnimalCard } from './AnimalCard';
-import { changeText, niceDate } from './format';
+import { changeText, niceDate, todayIso } from './format';
 import { Glance } from './Glance';
 import { HealthTab } from './HealthTab';
 import { Home } from './Home';
@@ -143,5 +143,14 @@ describe('TimelineTab (A19)', () => {
     expect(screen.getByText('Our note')).toBeTruthy();
     expect(screen.getByText('Vet record')).toBeTruthy();
     expect(screen.getByText('next due 3 Oct 2026')).toBeTruthy();
+  });
+});
+
+describe('todayIso is the date in Dublin (finding 7)', () => {
+  it('turns over at midnight in Dublin, not at the phone\'s or UTC midnight', () => {
+    expect(todayIso(new Date('2026-10-06T22:59:59Z'))).toBe('2026-10-06');
+    expect(todayIso(new Date('2026-10-06T23:00:00Z'))).toBe('2026-10-07'); // 00:00 Irish Summer Time
+    expect(todayIso(new Date('2026-12-31T23:59:59Z'))).toBe('2026-12-31'); // GMT in winter
+    expect(todayIso(new Date('2027-01-01T00:00:00Z'))).toBe('2027-01-01');
   });
 });

@@ -17,8 +17,12 @@ const parts = (iso: string): [number, number, number] | null => {
 };
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+/** Today's date in Ireland (Europe/Dublin), whatever the time zone of the machine running this: the household's day
+ *  turns over at midnight in Dublin, not at midnight on the server or the phone (independent review, finding 7). */
+const DUBLIN_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Dublin', year: 'numeric', month: '2-digit', day: '2-digit' });
 export function todayIso(d = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const p = Object.fromEntries(DUBLIN_DAY.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
 }
 
 /** null when the date is unknown, unreadable, or in the future. */

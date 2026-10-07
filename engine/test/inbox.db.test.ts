@@ -65,6 +65,7 @@ function answerFor(text: string, over: Partial<ReaderAnswer> = {}): ReaderAnswer
 
 const calls = { claude: [] as PageText[][], local: [] as PageText[][] };
 let claudeMode: 'ok' | 'throw' | 'garbage' = 'ok';
+let override: ((text: string) => ReaderAnswer | null) | null = null;
 const claude: Reader = {
   kind: 'claude',
   read: (pages) => {
@@ -72,14 +73,17 @@ const claude: Reader = {
     if (claudeMode === 'throw') return Promise.reject(new Error('READER_TIMEOUT'));
     if (claudeMode === 'garbage') return Promise.resolve({ output: { hello: 'world' }, model: 'fake', cli_version: null, usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.01 } });
     const text = pages.map((p) => p.text).join('\n');
+    const special = override?.(text);
+    if (special) return Promise.resolve({ output: special, model: 'fake-sonnet', cli_version: '9.9.9 (fake)', usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0 } });
     const notPet = text.includes('Electricity bill');
     return Promise.resolve({ output: notPet ? answerFor(text, { is_pet_document: false, doc_kind: 'OTHER', facts: [] }) : answerFor(text), model: 'fake-sonnet', cli_version: '9.9.9 (fake)', usage: { input_tokens: 1200, output_tokens: 300, cost_usd: 0.02 } });
   },
 };
 const local: Reader = { kind: 'local', read: (pages) => { calls.local.push(pages); return Promise.resolve({ output: answerFor(pages[0]!.text), model: 'fake-local', cli_version: null, usage: { input_tokens: null, output_tokens: null, cost_usd: null } }); } };
 // text files are their own text; a .png is "OCR'd" at home into text (the image is never handed to a reader)
+let duringRead: ((abs: string) => Promise<void>) | null = null; // runs while a file is being read (a withdrawal "in flight")
 const extractor: Extractor = {
-  textPages: async (abs) => (abs.endsWith('.png') ? [{ page: 1, text: '' }] : [{ page: 1, text: await readFile(abs, 'utf8') }]),
+  textPages: async (abs) => { await duringRead?.(abs); return abs.endsWith('.png') ? [{ page: 1, text: '' }] : [{ page: 1, text: await readFile(abs, 'utf8') }]; },
   ocrPage: () => Promise.resolve(invoice('OCR-1')),
   ocrIdentity: () => Promise.resolve({ model_name: 'glm-ocr (fake)', model_digest: null }),
 };
@@ -180,14 +184,17 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     const it2 = await byFile('second');
     const pid = (await withTxn(A, true, (c) => c.query<{ id: number }>("SELECT proposal_id::int AS id FROM ingest.proposal WHERE inbox_item_id = $1 AND target = 'vaccination'", [it2.id]))).rows[0]!.id;
     await expect(inA((c) => inbox.reviewProposal(c, it2.id, pid, alex, { action: 'accept' }))).rejects.toMatchObject({ status: 409 });
-    await expect(inA((c) => inbox.decide(c, it2.id, kim, { action: 'PROCESS', animal_id: cat }))).rejects.toMatchObject({ status: 403 });
-    await expect(inA((c) => inbox.getItem(c, it2.id, kim))).rejects.toMatchObject({ status: 403 }); // before an animal is set, only its person or a manager
-    const view = await inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T));
+    // before an animal is set, only its person or a manager may see it: anyone else gets "no such document" (finding 2)
+    await expect(inA((c) => inbox.decide(c, it2.id, kim, { action: 'PROCESS', animal_id: cat }))).rejects.toMatchObject({ status: 404 });
+    await expect(inA((c) => inbox.getItem(c, it2.id, kim))).rejects.toMatchObject({ status: 404 });
+    // 03/10/2026 could be 3 Oct or 10 Mar: the person must set the date themselves (finding 4)
+    await expect(inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T))).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/day\/month/) });
+    const view = await inA((c) => inbox.decide(c, it2.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T));
     expect(view).toMatchObject({ animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' });
     await expect(inbox.fileItem(A, deps(), it2.id, alex, T)).rejects.toMatchObject({ status: 409 }); // values still waiting
     await expect(inA((c) => inbox.reviewProposal(c, it2.id, pid, alex, { action: 'correct', values: { vaccine: 'Feline enteritis', diagnosis: 'x' } }))).rejects.toMatchObject({ status: 400 });
     await inA((c) => inbox.reviewProposal(c, it2.id, pid, alex, { action: 'correct', values: { vaccine: 'Feline enteritis (RCP)', given_on: '2026-10-03', next_due_on: '2027-10-03' } }));
-    await inA((c) => inbox.acceptAllClean(c, it2.id, alex));
+    await acceptEverything(it2.id, alex); // the visit's date is flagged DATE_ORDER_AMBIGUOUS: accepted one by one after reading
   });
 
   it('A21: filing writes confirmed rows with their page and quote in one go, THEN moves the original (hash unchanged)', async () => {
@@ -210,12 +217,14 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     expect(tl.filter((e) => e.source?.document_id === out.document_id && e.source.page === 1).map((e) => e.kind).sort()).toEqual(['VACCINATION', 'VET_VISIT']);
     // the original is shown only to someone who may see documents
     expect(await withTxn(A, true, (c) => inbox.documentFile(c, out.document_id, sam))).toMatchObject({ vault_path: out.filed_path });
-    await expect(withTxn(A, true, (c) => inbox.documentFile(c, out.document_id, kim))).rejects.toMatchObject({ status: 403 });
+    await expect(withTxn(A, true, (c) => inbox.documentFile(c, out.document_id, kim))).rejects.toMatchObject({ status: 404 });
   });
 
   it('A21 + sec 7.2: a Family member can file, but what they file waits as PROPOSED for an Owner / Primary carer', async () => {
     const img = await byFile('snap');
-    await inA((c) => inbox.decide(c, img.id, sam, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T));
+    // step 1 on alex's own document is alex's (or a manager's); once it is about Biscuit, a Family member may check and file it
+    await expect(inA((c) => inbox.decide(c, img.id, sam, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T))).rejects.toMatchObject({ status: 404 });
+    await inA((c) => inbox.decide(c, img.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE', document_date: '2026-10-03' }, T));
     await acceptEverything(img.id, sam);
     const out = await inbox.fileItem(A, deps(), img.id, sam, T);
     expect(out.status).toBe('FILED');
@@ -225,7 +234,7 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
 
   it('a failed move leaves the rows committed and the item FILED_PENDING; the sweep finishes it later', async () => {
     const first = await byFile('first');
-    await inA((c) => inbox.decide(c, first.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'LAB_REPORT' }, T));
+    await inA((c) => inbox.decide(c, first.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'LAB_REPORT', document_date: '2026-10-03' }, T));
     await acceptEverything(first.id, alex);
     await mkdir(join(root, folder, 'Pets', 'filed'), { recursive: true });
     await writeFile(join(root, folder, 'Pets', 'filed', 'lab_report'), 'in the way'); // a FILE where the folder should go
@@ -296,5 +305,103 @@ describe.skipIf(!URL_)('S5 inbox + AI reading (database)', () => {
     await inbox.sweepWorkspace(A, deps());
     expect(calls.claude.length).toBe(n);
     expect(await byFile('fourth')).toMatchObject({ status: 'READ', flags: ['AWAITING_AI_GO_AHEAD'] });
+  });
+  it('finding 8: a folder name differing only in case is taken (macOS sees one folder); the database refuses it too', async () => {
+    await expect(inA((c) => inbox.setFolder(c, A, sam, { folder: folder.toLowerCase() }))).rejects.toMatchObject({ status: 409 });
+    await expect(withTxn(null, false, (c) => c.query("INSERT INTO core.vault_folder_binding (workspace_id, member_name, vault_folder_name, created_by) VALUES ($1, $2, $3, $2)", [A, sam, folder.toUpperCase()]))).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('finding 1: withdrawing the folder go-ahead withdraws the AI go-ahead too (recorded), and stops reading at every stage', async () => {
+    await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
+    await writeFile(join(inboxDir(), 'fifth.txt'), invoice('R5'));
+    const b = await withTxn(null, true, (c) => c.query('SELECT workspace_id::int AS workspace_id, member_name, vault_folder_name, go_ahead_at::text, ai_go_ahead_at::text FROM core.vault_folder_binding WHERE member_name = $1', [alex]));
+    await inbox.scanFolder(A, deps(), b.rows[0]); // discovered, not yet read
+    const fifth = await byFile('fifth');
+    expect(fifth.status).toBe('DISCOVERED');
+    const evBefore = (await withTxn(A, true, (c) => c.query('SELECT 1 FROM core.consent_event WHERE member_name = $1', [alex]))).rowCount!;
+    const mine = await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', false));
+    expect(mine).toMatchObject({ reading: false, ai_reading: false });
+    const ev = await withTxn(A, true, (c) => c.query<{ kind: string; given: boolean }>('SELECT kind, given FROM core.consent_event WHERE member_name = $1 ORDER BY consent_event_id', [alex]));
+    expect(ev.rows.slice(evBefore)).toEqual([{ kind: 'FOLDER_READ', given: false }, { kind: 'AI_READING', given: false }]);
+    // the AI go-ahead cannot be given without the folder go-ahead
+    await expect(inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true))).rejects.toMatchObject({ status: 409 });
+    const n = { claude: calls.claude.length, local: calls.local.length };
+    const full = async (id: number) => (await withTxn(A, true, (c) => c.query<{ id: number; doc: number; member_name: string; status: string; vault_path: string; file_name: string; media_type: string; flags: string[]; discovered_at: string }>(
+      `SELECT i.inbox_item_id::int AS id, d.source_document_id::int AS doc, i.member_name, i.status, d.vault_path, d.file_name, d.media_type, i.flags, d.discovered_at::date::text AS discovered_at
+         FROM ingest.inbox_item i JOIN ingest.source_document d ON d.source_document_id = i.source_document_id WHERE i.inbox_item_id = $1`, [id]))).rows[0]!;
+    // read: nothing; assess (even with a local reader configured): nothing; the sweep: nothing
+    expect(await inbox.readText(A, deps(), await full(fifth.id))).toBe(false);
+    expect(await byFile('fifth')).toMatchObject({ status: 'DISCOVERED' });
+    const fourth = await byFile('fourth');
+    expect(fourth.status).toBe('READ');
+    expect(await inbox.assess(A, { ...deps(), local }, await full(fourth.id))).toBe('SKIPPED');
+    expect(await inbox.sweepWorkspace(A, { ...deps(), local })).toMatchObject({ discovered: 0, read: 0, assessed: 0, waiting: 0 });
+    expect({ claude: calls.claude.length, local: calls.local.length }).toEqual(n);
+    expect(await byFile('fourth')).toMatchObject({ status: 'READ' });
+  });
+
+  it('finding 1: a withdrawal while a file is being read keeps nothing of it and nothing goes to Claude', async () => {
+    await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', true));
+    await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
+    // fourth (READ) and fifth (DISCOVERED) are now read in this sweep; fifth's reading is where the person says stop
+    duringRead = async (abs) => { if (abs.endsWith('fifth.txt')) await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', false)); };
+    const n = calls.claude.length;
+    await inbox.sweepWorkspace(A, deps());
+    duringRead = null;
+    const fifth = await byFile('fifth');
+    expect(fifth.status).toBe('DISCOVERED');
+    expect((await withTxn(A, true, (c) => c.query('SELECT 1 FROM ingest.page_text WHERE inbox_item_id = $1', [fifth.id]))).rowCount).toBe(0);
+    expect(calls.claude.length).toBe(n); // and the fourth, waiting to be assessed in the same pass, was not sent either
+    expect(await byFile('fourth')).toMatchObject({ status: 'READ' });
+  });
+
+  it('finding 5: an unusual weight from a document is never confirmed automatically -- it waits for an explicit "yes, that\'s right"', async () => {
+    await inA((c) => inbox.setConsent(c, A, alex, 'FOLDER_READ', true));
+    await inA((c) => inbox.setConsent(c, A, alex, 'AI_READING', true));
+    const text = 'Riverside Veterinary Clinic   Tel 01 555 0101\nInvoice date: 5 Oct 2026   Ref W1\nPatient: Biscuit (feline)\nWeight: 42 kg\n';
+    override = (t) => (t.includes('Ref W1') ? answerFor(t, {
+      document_date: { value: '2026-10-05', page: 1, quote: 'Invoice date: 5 Oct 2026' },
+      animal: { name: 'Biscuit', species: 'cat', microchip: null, page: 1, quote: 'Patient: Biscuit (feline)' },
+      facts: [{ kind: 'weight', page: 1, quote: 'Weight: 42 kg', fields: { value: '42', unit: 'kg' } }],
+      costs: { currency: null, total: { amount: null, page: null, quote: null }, lines: [] },
+    }) : null);
+    await writeFile(join(inboxDir(), 'heavy.txt'), text);
+    await inbox.sweepWorkspace(A, deps());
+    override = null;
+    const it = await byFile('heavy');
+    expect(it.status).toBe('NEEDS_REVIEW');
+    await inA((c) => inbox.decide(c, it.id, alex, { action: 'PROCESS', animal_id: cat, doc_kind: 'INVOICE' }, T));
+    const w = async () => (await withTxn(A, true, (c) => c.query<{ id: number; status: string; flags: string[]; decided_by: string | null }>("SELECT proposal_id::int AS id, status, flags, decided_by FROM ingest.proposal WHERE inbox_item_id = $1 AND target = 'weight'", [it.id]))).rows[0]!;
+    expect((await w()).flags).toContain('UNUSUAL_WEIGHT'); // 42 kg for a cat: flagged at step 1
+    await inA((c) => inbox.acceptAllClean(c, it.id, alex));
+    expect((await w()).status).toBe('PROPOSED'); // never taken by "accept all"
+    const wid = (await w()).id;
+    await expect(inA((c) => inbox.reviewProposal(c, it.id, wid, alex, { action: 'accept' }))).rejects.toMatchObject({ status: 409, extra: { needs_confirmation: true } });
+    expect((await w()).status).toBe('PROPOSED');
+    await expect(inbox.fileItem(A, deps(), it.id, alex, T)).rejects.toMatchObject({ status: 409 });
+    await inA((c) => inbox.reviewProposal(c, it.id, wid, alex, { action: 'accept', confirm_unusual: true }));
+    expect(await w()).toMatchObject({ status: 'ACCEPTED', decided_by: alex, flags: expect.arrayContaining(['UNUSUAL_CONFIRMED']) });
+    // finding 9 too: the filed name and its hash-suffixed name are both taken -> filed under the next free name, recorded
+    const dir = join(root, folder, 'Pets', 'filed', 'invoice');
+    await mkdir(dir, { recursive: true });
+    const h8 = createHash('sha256').update(text).digest('hex').slice(0, 8);
+    await writeFile(join(dir, 'heavy.txt'), 'someone else');
+    await writeFile(join(dir, `heavy-${h8}.txt`), 'someone else too');
+    const out = await inbox.fileItem(A, deps(), it.id, alex, T);
+    expect(out).toMatchObject({ status: 'FILED', filed_path: `${folder}/Pets/filed/invoice/heavy-${h8}-2.txt` });
+    expect(out.flags).toContain('FILED_UNDER_NEW_NAME');
+    expect(await readFile(join(dir, 'heavy.txt'), 'utf8')).toBe('someone else'); // never overwritten
+    expect(await readFile(join(dir, `heavy-${h8}.txt`), 'utf8')).toBe('someone else too');
+    expect(await readFile(join(dir, `heavy-${h8}-2.txt`), 'utf8')).toBe(text);
+    const m = await withTxn(A, true, (c) => c.query<{ id: number; status: string; plausibility_confirmed: boolean; confirmed_by: string }>(
+      'SELECT measurement_id::int AS id, status, plausibility_confirmed, confirmed_by FROM health.measurement WHERE source_document_id = $1', [out.document_id]));
+    expect(m.rows).toEqual([{ id: expect.any(Number), status: 'CONFIRMED', plausibility_confirmed: true, confirmed_by: alex }]);
+    // finding 11: who confirmed it, and when, is frozen; the status can still move along the flow
+    const id = m.rows[0]!.id;
+    await expect(inA((c) => c.query("UPDATE health.measurement SET confirmed_by = 'someone-else' WHERE measurement_id = $1", [id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(inA((c) => c.query("UPDATE health.measurement SET confirmed_at = now() - interval '1 day' WHERE measurement_id = $1", [id]))).rejects.toMatchObject({ code: '23514' });
+    await inA((c) => c.query("UPDATE health.measurement SET status = 'DISPUTED' WHERE measurement_id = $1", [id]));
+    const after = await withTxn(A, true, (c) => c.query('SELECT status, confirmed_by FROM health.measurement WHERE measurement_id = $1', [id]));
+    expect(after.rows[0]).toEqual({ status: 'DISPUTED', confirmed_by: alex });
   });
 });

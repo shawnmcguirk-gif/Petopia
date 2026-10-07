@@ -7,7 +7,7 @@
 //           moves the original to the person's filed folder. The page text is shown beside the values, quotes marked.
 import { ExternalLink } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, get, openDocument, post, type Animal, type InboxItem, type Proposal } from './api';
+import { ApiError, QuestionError, get, openDocument, post, postAsking, type Animal, type InboxItem, type Proposal } from './api';
 import { niceDate, todayIso } from './format';
 import { Card, ErrorText, Field, Section } from './ui';
 import { DOC_KIND_WORDS, FIELD_WORDS, FLAG_WORDS, STATUS_WORDS, TARGET_WORDS } from './words';
@@ -32,9 +32,16 @@ export function InboxItemPage({ id, animals, onChanged }: { id: number; animals:
     try { setIt(await get<InboxItem>(`api/inbox/${id}`)); } catch (e) { setError(e instanceof ApiError ? e.message : 'Could not load this document.'); }
   }, [id]);
   useEffect(() => { void load(); }, [load]);
-  const act = async (path: string, body: unknown = {}) => {
+  /** `asking`: an unusual weight comes back as a question (QuestionError) for the value's card to ask, not an error. */
+  const act = async (path: string, body: unknown = {}, asking = false) => {
     setBusy(true); setError(null);
-    try { setIt(await post<InboxItem>(`api/inbox/${id}/${path}`, body)); onChanged?.(); } catch (e) { setError(e instanceof ApiError ? e.message : 'That did not work — try again.'); } finally { setBusy(false); }
+    try {
+      setIt(await (asking ? postAsking<InboxItem> : post<InboxItem>)(`api/inbox/${id}/${path}`, body)); onChanged?.();
+    } catch (e) {
+      if (asking && e instanceof QuestionError) throw e;
+      setError(e instanceof ApiError ? e.message : 'That did not work — try again.');
+      if (path === 'file') void load(); // filing may have sent an unusual weight back to be checked
+    } finally { setBusy(false); }
   };
   if (!it) return <main className="mx-auto max-w-5xl px-4 pt-6 pb-28">{error ? <ErrorText text={error} /> : <p className="text-ink-2" aria-busy="true">Loading…</p>}</main>;
   const reviewable = REVIEWABLE.includes(it.status);
@@ -61,7 +68,7 @@ export function InboxItemPage({ id, animals, onChanged }: { id: number; animals:
           {decided && (
             <Section title={reviewable ? 'Step 2 · The values' : 'What was read'}>
               {it.proposals.length === 0 && <p className="m-0 text-ink-2">No values to check{it.flags.includes('KEEP_ONLY') ? ' — kept as a document only' : ''}.</p>}
-              <div className="grid gap-3">{it.proposals.map((p) => <ProposalCard key={p.id} p={p} open={reviewable} busy={busy} onDo={(b) => void act(`proposals/${p.id}`, b)} />)}</div>
+              <div className="grid gap-3">{it.proposals.map((p) => <ProposalCard key={p.id} p={p} open={reviewable} busy={busy} onDo={(b) => act(`proposals/${p.id}`, b, true)} />)}</div>
               {reviewable && clean.length > 0 && (
                 <button type="button" className="btn mt-4" disabled={busy} onClick={() => void act('accept-all')}>Accept all {clean.length} that passed checks</button>
               )}
@@ -93,10 +100,12 @@ function StepOne({ it, animals, busy, onDecide, onRetry }: { it: InboxItem; anim
   const mine = animals.filter((a) => a.status === 'ACTIVE' && a.can.includes('DROP_DOCUMENTS'));
   const [animal, setAnimal] = useState<number | ''>(it.animal_proposed_id ?? (mine.length === 1 ? mine[0]!.id : ''));
   const [kind, setKind] = useState(it.doc_kind_proposed ?? 'OTHER');
-  const [date, setDate] = useState(it.document_date_assumed ? '' : it.document_date ?? '');
+  // 03/10/2026: 3 Oct or 10 Mar? The engine will not guess; the person sets the date (finding 4)
+  const ambiguous = it.flags.includes('DATE_ORDER_AMBIGUOUS');
+  const [date, setDate] = useState(it.document_date_assumed || ambiguous ? '' : it.document_date ?? '');
   const name = animals.find((a) => a.id === animal)?.name;
   const n = it.proposals.length;
-  const needDate = it.document_date_assumed || !it.document_date;
+  const needDate = it.document_date_assumed || !it.document_date || ambiguous;
   const unread = it.status === 'ASSESS_FAILED' || it.flags.includes('AWAITING_AI_GO_AHEAD') || it.status === 'READ';
   const found: ReactNode[] = [];
   if (it.found.animal) found.push(<li key="a">Animal: {it.found.animal.name ?? '—'}{it.found.animal.microchip ? ` (microchip ${it.found.animal.microchip})` : ''} <Q p={it.found.animal.page} q={it.found.animal.quote} /></li>);
@@ -121,7 +130,7 @@ function StepOne({ it, animals, busy, onDecide, onRetry }: { it: InboxItem; anim
           <Field label="Kind">
             <select className="field" value={kind} onChange={(e) => setKind(e.target.value)}>{Object.entries(DOC_KIND_WORDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           </Field>
-          <Field label={needDate ? 'Date (not printed — please set)' : 'Date'}><input className="field" type="date" max={todayIso()} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label={ambiguous ? 'Date (day/month unclear — please set)' : needDate ? 'Date (not printed — please set)' : 'Date'}><input className="field" type="date" max={todayIso()} value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {!unread && <button type="button" className="btn btn-primary" disabled={busy || !animal || (needDate && !date)} onClick={() => onDecide({ action: 'PROCESS', animal_id: animal, doc_kind: kind, ...(date ? { document_date: date } : {}) })}>Yes, check the values</button>}
@@ -136,8 +145,15 @@ function StepOne({ it, animals, busy, onDecide, onRetry }: { it: InboxItem; anim
 
 const Q = ({ p, q }: { p: number; q: string }) => <span className="block text-[13px]">page {p}: “{q}”</span>;
 
-function ProposalCard({ p, open, busy, onDo }: { p: Proposal; open: boolean; busy: boolean; onDo: (b: unknown) => void }) {
+function ProposalCard({ p, open, busy, onDo }: { p: Proposal; open: boolean; busy: boolean; onDo: (b: Record<string, unknown>) => Promise<void> }) {
   const [editing, setEditing] = useState(false);
+  // An unusual weight (finding 5): nothing is accepted until the person answers -- "yes, that's right" sends
+  // confirm_unusual, recorded with their name; or they take the suggestion. Same question as typing a weight.
+  const [asked, setAsked] = useState<{ q: QuestionError; body: Record<string, unknown> } | null>(null);
+  const send = async (b: Record<string, unknown>) => {
+    setAsked(null);
+    try { await onDo(b); } catch (e) { if (e instanceof QuestionError) setAsked({ q: e, body: b }); }
+  };
   const shown = p.corrected ?? p.payload;
   const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(p.payload).filter(([k]) => k !== 'cost_currency').map(([k, v]) => [k, v === null ? '' : String(v)])));
   const tone = p.status === 'DISMISSED' ? 'opacity-60' : '';
@@ -165,14 +181,27 @@ function ProposalCard({ p, open, busy, onDo }: { p: Proposal; open: boolean; bus
         <div className="mt-3 flex flex-wrap gap-2">
           {editing ? (
             <>
-              <button type="button" className="btn btn-primary min-h-10 px-4 text-[14px]" disabled={busy} onClick={() => { onDo({ action: 'correct', values: vals }); setEditing(false); }}>Save correction</button>
+              <button type="button" className="btn btn-primary min-h-10 px-4 text-[14px]" disabled={busy} onClick={() => { void send({ action: 'correct', values: vals }); setEditing(false); }}>Save correction</button>
               <button type="button" className="btn min-h-10 px-4 text-[14px]" onClick={() => setEditing(false)}>Cancel</button>
             </>
+          ) : asked ? (
+            <div className="grid gap-2">
+              <p className="m-0 text-[15px] font-semibold text-amber" role="alert">{asked.q.message}</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="btn btn-primary min-h-10 px-4 text-[14px]" disabled={busy} onClick={() => void send({ ...asked.body, confirm_unusual: true })}>Yes, that’s right</button>
+                {asked.q.suggestion && (
+                  <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy} onClick={() => { const sg = asked.q.suggestion!; void send({ action: 'correct', values: { ...vals, ...((asked.body.values as Record<string, string> | undefined) ?? {}), value: sg.value, unit: sg.unit } }); }}>
+                    Use {asked.q.suggestion.value} {asked.q.suggestion.unit}
+                  </button>
+                )}
+                <button type="button" className="btn min-h-10 px-4 text-[14px]" onClick={() => setAsked(null)}>Cancel</button>
+              </div>
+            </div>
           ) : (
             <>
-              <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy || p.status === 'ACCEPTED'} onClick={() => onDo({ action: 'accept' })}>Accept</button>
+              <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy || p.status === 'ACCEPTED'} onClick={() => void send({ action: 'accept' })}>Accept</button>
               <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy} onClick={() => setEditing(true)}>Correct</button>
-              <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy || p.status === 'DISMISSED'} onClick={() => onDo({ action: 'dismiss' })}>Not right</button>
+              <button type="button" className="btn min-h-10 px-4 text-[14px]" disabled={busy || p.status === 'DISMISSED'} onClick={() => void send({ action: 'dismiss' })}>Not right</button>
             </>
           )}
         </div>

@@ -4,6 +4,14 @@
 //   - a value with a number that is not a whole numeric token of its quote is DROPPED ("every number must be in its
 //     quote": a model cannot put 61 on screen when the page says 6.1);
 //   - a fact whose fields do not fit its kind (unknown field, wrong type) is DROPPED;
+//   - a quote shorter than MIN_QUOTE characters is DROPPED (a "." or an "e" is found on any page and proves nothing);
+//   - a weight whose UNIT is not a whole word of its quote is DROPPED ("6.1 kg" against a quote saying "6.1 lb");
+//   - a fact with a text value (a vaccine, a condition, a dose unit ...) that is not in its quote is DROPPED
+//     (normalised, case-insensitive; enum codes such as ROUTINE / ACTIVE are the reader's labels, not printed text);
+//   - a date must have its day, month and year in its quote (02/10/2026, 2 Oct 2026, 2026-10-02 ...). When the quote's
+//     numbers could be day/month OR month/day (03/10/2026), the value is FLAGGED DATE_ORDER_AMBIGUOUS for a person to
+//     check, never passed silently; a date whose day or month is not in the quote is flagged DATE_NOT_IN_QUOTE (a fact)
+//     or dropped (the document date);
 // and every drop is COUNTED (inbox_item.dropped_count, extraction_run.dropped) with a reason code, never the text.
 // Nothing that survives is a fact yet: it becomes a proposal a person must accept.
 import { Ajv, type ValidateFunction } from 'ajv';
@@ -38,6 +46,10 @@ const numOf = (v: unknown): string | null => {
 /** Fields that hold a number the guard must find in the quote. */
 const NUMBER_FIELDS = new Set(['value', 'dose_amount', 'quantity_supplied', 'amount']);
 const DATE_FIELDS = new Set(['visit_on', 'follow_up_on', 'given_on', 'next_due_on', 'first_noted_on', 'performed_on', 'sampled_on', 'event_on', 'on']);
+/** Coded fields: the reader's label from a fixed list, not words printed on the page. `unit` is checked by unitIn. */
+const CODE_FIELDS = new Set(['kind', 'condition_status', 'certainty', 'substance_kind', 'unit']);
+/** A quote shorter than this proves nothing (finding: "Cancer" passed with the quote "."). */
+export const MIN_QUOTE = 8;
 
 const S = { type: ['string', 'null'], maxLength: 400 };
 const D = { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
@@ -66,7 +78,7 @@ export function fieldsFit(kind: FactKind, fields: unknown): boolean {
   return req.every((k) => { const x = (fields as Record<string, unknown>)[k]; return x !== null && x !== undefined && (typeof x !== 'string' || x.trim() !== ''); });
 }
 
-export type DropReason = 'QUOTE_NOT_ON_PAGE' | 'NUMBER_NOT_IN_QUOTE' | 'VALUE_NOT_IN_QUOTE' | 'FIELDS_INVALID' | 'NO_SUCH_PAGE';
+export type DropReason = 'QUOTE_NOT_ON_PAGE' | 'QUOTE_TOO_SHORT' | 'NUMBER_NOT_IN_QUOTE' | 'VALUE_NOT_IN_QUOTE' | 'UNIT_NOT_IN_QUOTE' | 'DATE_NOT_IN_QUOTE' | 'FIELDS_INVALID' | 'NO_SUCH_PAGE';
 export interface GuardedFact { kind: FactKind | 'contact'; page: number; quote: string; fields: Record<string, string | number | null>; flags: string[] }
 export interface Guarded {
   is_pet_document: boolean;
@@ -85,7 +97,9 @@ function quoteOk(pages: Map<number, string>, page: number | null, quote: string 
   if (!page || !quote) return 'QUOTE_NOT_ON_PAGE';
   const text = pages.get(page);
   if (text === undefined) return 'NO_SUCH_PAGE';
-  return text.includes(normText(quote)) ? null : 'QUOTE_NOT_ON_PAGE';
+  const q = normText(quote);
+  if (q.length < MIN_QUOTE) return 'QUOTE_TOO_SHORT';
+  return text.includes(q) ? null : 'QUOTE_NOT_ON_PAGE';
 }
 /** Every number in these fields must be a whole token of the quote. */
 function numbersOk(fields: Record<string, unknown>, quote: string): boolean {
@@ -99,11 +113,67 @@ function numbersOk(fields: Record<string, unknown>, quote: string): boolean {
   if (typeof fields.value_printed === 'string') for (const t of numTokens(fields.value_printed)) if (!tokens.has(t)) return false;
   return true;
 }
-/** A date is "in" its quote when its year is a token there (day/month order is the reader's to get right; a person checks). */
-const dateYearIn = (date: string, quote: string): boolean => {
-  const toks = new Set(numTokens(normText(quote)));
-  return toks.has(String(Number(date.slice(0, 4)))) || toks.has(String(Number(date.slice(2, 4))));
+const lc = (x: string): string => normText(x).toLowerCase();
+/** Every text value must be in its quote (normalised, case-insensitive). Numbers, dates and coded fields are checked elsewhere. */
+function textsOk(fields: Record<string, unknown>, quote: string): boolean {
+  const q = lc(quote);
+  for (const [k, v] of Object.entries(fields)) {
+    if (typeof v !== 'string' || NUMBER_FIELDS.has(k) || DATE_FIELDS.has(k) || CODE_FIELDS.has(k)) continue;
+    if (!q.includes(lc(v))) return false;
+  }
+  return true;
+}
+/** The ways a weight unit is printed. The unit must be a whole word of the quote ("6.1kg" counts; "kg" is not "g"). */
+const UNIT_WORDS: Record<string, string[]> = {
+  kg: ['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms', 'kilogramme', 'kilogrammes'],
+  g: ['g', 'gm', 'gms', 'gram', 'grams', 'gramme', 'grammes'],
+  lb: ['lb', 'lbs', 'pound', 'pounds'],
 };
+export function unitIn(unit: string, quote: string): boolean {
+  const words = UNIT_WORDS[unit.toLowerCase()] ?? [unit.toLowerCase()];
+  return words.some((w) => new RegExp(`(?<!\\p{L})${w}(?!\\p{L})`, 'u').test(lc(quote)));
+}
+
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const monthOf = (word: string): number | null => {
+  const w = word.toLowerCase().slice(0, 3);
+  const i = MONTH_NAMES.indexOf(w === 'sept' ? 'sep' : w);
+  return i < 0 ? null : i + 1;
+};
+const fullYear = (y: string): number => (y.length === 2 ? 2000 + Number(y) : Number(y));
+export type DateCheck = 'OK' | 'AMBIGUOUS' | 'MISSING';
+/**
+ * Is the date (YYYY-MM-DD) printed in the quote, with its day, month and year? Pure.
+ *   OK         an unambiguous match: 2026-10-03, 3 Oct 2026, October 3rd 2026, 25/10/2026 (25 cannot be a month);
+ *   AMBIGUOUS  only a numeric date whose first two numbers could be either way round (03/10/2026 is 3 Oct in Ireland,
+ *              10 Mar in the US) -- whichever reading the value took, a person checks it (finding: day/month swap);
+ *   MISSING    no date in the quote carries this day, month and year.
+ */
+export function dateIn(date: string, quote: string): DateCheck {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return 'MISSING';
+  const [Y, M, D] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const q = lc(quote);
+  let ambiguous = false;
+  for (const x of q.matchAll(/(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g)) if (Number(x[1]) === Y && Number(x[2]) === M && Number(x[3]) === D) return 'OK';
+  for (const x of q.matchAll(/(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{4}|\d{2})(?!\d)/g)) {
+    const [a, b, y] = [Number(x[1]), Number(x[2]), fullYear(x[3]!)];
+    if (y !== Y) continue;
+    const dm = a === D && b === M; // day/month (Irish)
+    const md = a === M && b === D; // month/day (US)
+    if (!dm && !md) continue;
+    if (a === b || a > 12 || b > 12) return 'OK'; // only one reading is possible
+    ambiguous = true;
+  }
+  const MON = '([a-z]{3,9})\\.?';
+  for (const x of q.matchAll(new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of)?[\\s-]+${MON},?[\\s-]+(\\d{4}|'?\\d{2})(?!\\d)`, 'g'))) {
+    if (Number(x[1]) === D && monthOf(x[2]!) === M && fullYear(x[3]!.replace("'", '')) === Y) return 'OK';
+  }
+  for (const x of q.matchAll(new RegExp(`${MON}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, 'g'))) {
+    if (monthOf(x[1]!) === M && Number(x[2]) === D && Number(x[3]) === Y) return 'OK';
+  }
+  return ambiguous ? 'AMBIGUOUS' : 'MISSING';
+}
 
 export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
   const pages = new Map(pageTexts.map((p) => [p.page, normText(p.text)]));
@@ -134,14 +204,21 @@ export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
   let documentDate: string | null = null;
   if (a.document_date.value) {
     const r = quoteOk(pages, a.document_date.page, a.document_date.quote);
-    if (r || !dateYearIn(a.document_date.value, a.document_date.quote!)) drop(r ?? 'NUMBER_NOT_IN_QUOTE');
-    else { documentDate = a.document_date.value; found.document_date = { value: documentDate, page: a.document_date.page, quote: a.document_date.quote }; }
+    const dc = r ? 'MISSING' : dateIn(a.document_date.value, a.document_date.quote!);
+    if (r || dc === 'MISSING') drop(r ?? 'DATE_NOT_IN_QUOTE');
+    else {
+      documentDate = a.document_date.value;
+      // day/month or month/day? the person sets the date at step 1 (inbox.ts decide)
+      if (dc === 'AMBIGUOUS') flags.push('DATE_ORDER_AMBIGUOUS');
+      found.document_date = { value: documentDate, page: a.document_date.page, quote: a.document_date.quote, ambiguous: dc === 'AMBIGUOUS' };
+    }
   }
 
   const facts: GuardedFact[] = [];
   if (a.provider.name) {
     const r = quoteOk(pages, a.provider.page, a.provider.quote);
     if (r) drop(r);
+    else if (!lc(a.provider.quote!).includes(lc(a.provider.name))) drop('VALUE_NOT_IN_QUOTE');
     else {
       const phoneOk = !a.provider.phone || numTokens(a.provider.phone).every((t) => numTokens(normText(a.provider.quote!)).includes(t));
       const fields = { name: a.provider.name.trim().slice(0, 120), phone: phoneOk ? a.provider.phone : null };
@@ -157,8 +234,15 @@ export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
     const r = quoteOk(pages, f.page, f.quote);
     if (r) { drop(r); continue; }
     if (!numbersOk(fields, f.quote)) { drop('NUMBER_NOT_IN_QUOTE'); continue; }
+    if (f.kind === 'weight' && (typeof fields.unit !== 'string' || !unitIn(fields.unit, f.quote))) { drop('UNIT_NOT_IN_QUOTE'); continue; }
+    if (!textsOk(fields, f.quote)) { drop('VALUE_NOT_IN_QUOTE'); continue; }
     const ff: string[] = [];
-    for (const [k, v] of Object.entries(fields)) if (DATE_FIELDS.has(k) && typeof v === 'string' && !dateYearIn(v, f.quote)) ff.push('DATE_NOT_IN_QUOTE');
+    for (const [k, v] of Object.entries(fields)) {
+      if (!DATE_FIELDS.has(k) || typeof v !== 'string') continue;
+      const dc = dateIn(v, f.quote);
+      if (dc === 'MISSING') ff.push('DATE_NOT_IN_QUOTE');
+      else if (dc === 'AMBIGUOUS') ff.push('DATE_ORDER_AMBIGUOUS');
+    }
     facts.push({ kind: f.kind, page: f.page, quote: f.quote, fields, flags: [...new Set(ff)] });
   }
 

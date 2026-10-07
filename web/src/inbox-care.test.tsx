@@ -145,6 +145,33 @@ describe('Checking a document: two steps (A21)', () => {
     expect((screen.getByRole('button', { name: '2 still to look at' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/confirmed by you/)).toBeTruthy();
   });
+  it('finding 4: a date that could be day/month or month/day is not pre-filled -- the person must set it', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json(200, item({ flags: ['DATE_ORDER_AMBIGUOUS'] }))));
+    render(<InboxItemPage id={4} animals={[biscuit]} />);
+    await waitFor(() => expect(screen.getByLabelText(/day\/month unclear/i)).toBeTruthy());
+    expect((screen.getByLabelText(/day\/month unclear/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('button', { name: /yes, check the values/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('finding 5: an unusual weight is asked about; only "Yes, that\'s right" sends confirm_unusual', async () => {
+    const decided = item({ decided_by: 'Alex', animal_id: 7, doc_kind: 'INVOICE', proposals: [{ ...item().proposals[0]!, payload: { value: '42', unit: 'kg' }, quote: 'Weight: 42 kg', flags: ['UNUSUAL_WEIGHT'] }] });
+    const f = vi.fn((u: string, init?: RequestInit) => {
+      if (!init || init.method !== 'POST') return json(200, decided);
+      const b = JSON.parse(String(init.body)) as { confirm_unusual?: boolean };
+      return b.confirm_unusual ? json(200, decided) : json(409, { error: '42 kg is outside the usual range for a cat. Did you mean 4.2 kg?', needs_confirmation: true, suggestion: { value: '4.2', unit: 'kg' } });
+    });
+    vi.stubGlobal('fetch', f);
+    render(<InboxItemPage id={4} animals={[biscuit]} />);
+    await waitFor(() => expect(screen.getByText(/very different from the last weight/i)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /accept all/i })).toBeNull(); // the flagged weight is not in "accept all"
+    fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/did you mean 4.2 kg/i));
+    expect(screen.getByRole('button', { name: 'Use 4.2 kg' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /yes, that.s right/i }));
+    await waitFor(() => expect(f.mock.calls.filter((c) => c[1]?.method === 'POST')).toHaveLength(2));
+    const posts = f.mock.calls.filter((c) => c[1]?.method === 'POST').map((c) => JSON.parse(String(c[1]!.body)) as Record<string, unknown>);
+    expect(posts[0]).toEqual({ action: 'accept' });
+    expect(posts[1]).toEqual({ action: 'accept', confirm_unusual: true });
+  });
   it('the page text marks the quoted words', () => {
     const { container } = render(<Marked text={'Patient: Biscuit\nWeight:   4.2 kg'} quotes={['Weight: 4.2 kg']} />);
     expect(container.querySelector('mark')?.textContent).toBe('Weight:   4.2 kg');

@@ -1,5 +1,6 @@
 // Age is computed from born_on + precision, never stored (spec sec 3.3). Fixed `today` so these never drift.
 import { describe, expect, it } from 'vitest';
+import * as ageMod from '../src/age.js';
 import { ageOf, formatVagueDate, parseVagueDate } from '../src/age.js';
 
 const T = '2026-10-07';
@@ -53,5 +54,26 @@ describe('parseVagueDate / formatVagueDate', () => {
     expect(formatVagueDate('2018-03-01', 'MONTH')).toBe('2018-03');
     expect(formatVagueDate('2018-03-14', 'DAY')).toBe('2018-03-14');
     expect(formatVagueDate(null, 'UNKNOWN')).toBeNull();
+  });
+});
+
+describe('todayIso is the date in Dublin, whatever the machine\'s time zone (finding 7)', () => {
+  it('around midnight in summer (IST, UTC+1) and winter (GMT)', () => {
+    const { todayIso } = ageMod;
+    expect(todayIso(new Date('2026-10-06T22:59:59Z'))).toBe('2026-10-06'); // 23:59:59 in Dublin
+    expect(todayIso(new Date('2026-10-06T23:00:00Z'))).toBe('2026-10-07'); // 00:00 in Dublin, still the 6th in UTC
+    expect(todayIso(new Date('2026-12-31T23:59:59Z'))).toBe('2026-12-31');
+    expect(todayIso(new Date('2027-01-01T00:00:00Z'))).toBe('2027-01-01');
+  });
+  it('does not follow the process time zone', () => {
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'Pacific/Kiritimati'; // UTC+14: already the 7th there at 12:00Z on the 6th
+      expect(ageMod.todayIso(new Date('2026-10-06T12:00:00Z'))).toBe('2026-10-06');
+      process.env.TZ = 'America/Los_Angeles';
+      expect(ageMod.todayIso(new Date('2026-10-06T23:30:00Z'))).toBe('2026-10-07');
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
   });
 });

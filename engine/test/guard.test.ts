@@ -1,9 +1,9 @@
 // The quote guard and the reader's answer checks (spec sec 5.2; S5, A20). Pure: no database, no model. Fictional
 // documents only ("Biscuit", a cat).
 import { describe, expect, it } from 'vitest';
-import { fieldsFit, guardAnswer, normText, numTokens } from '../src/guard.js';
+import { dateIn, fieldsFit, guardAnswer, normText, numTokens, unitIn } from '../src/guard.js';
 import { chooseReader, contentMatches } from '../src/inbox.js';
-import { checkAnswer, readerPrompt, type Reader, type ReaderAnswer } from '../src/reader.js';
+import { checkAnswer, claudeArgs, readerPrompt, type Reader, type ReaderAnswer } from '../src/reader.js';
 import { filedPath, safeFileName } from '../src/vault.js';
 
 const PAGE1 = `Riverside Veterinary Clinic   Tel 01 555 0101
@@ -49,7 +49,10 @@ describe('guardAnswer (sec 5.2 "every value\'s quote must be on its page, every 
     expect(g.facts.find((f) => f.kind === 'vet_visit')!.fields).toMatchObject({ cost_amount: '75.50', cost_currency: 'EUR' });
     expect(g.animal).toEqual({ name: 'Biscuit', species: 'cat', microchip: '900000000000001' });
     expect(g.document_date).toBe('2026-10-03');
-    expect(g.flags).toEqual([]);
+    // 03/10/2026 is 3 Oct here, but 10 Mar to a US reader: flagged for the person, never passed silently (finding 4)
+    expect(g.flags).toEqual(['DATE_ORDER_AMBIGUOUS']);
+    expect(g.facts.find((f) => f.kind === 'vet_visit')!.flags).toEqual(['DATE_ORDER_AMBIGUOUS']);
+    expect(g.facts.find((f) => f.kind === 'vaccination')!.flags).toEqual(['DATE_ORDER_AMBIGUOUS']);
   });
   it('S5 acceptance: a fake number not in its quote is DROPPED and COUNTED (61 kg where the page says 4.2 kg)', () => {
     const a = answer();
@@ -91,6 +94,79 @@ describe('guardAnswer (sec 5.2 "every value\'s quote must be on its page, every 
   });
   it('a document that is not about a pet keeps its classification; the item handles it', () => {
     expect(guardAnswer(answer({ is_pet_document: false }), pages).is_pet_document).toBe(false);
+  });
+});
+
+describe('finding 3: units, text values and short quotes', () => {
+  const PAGE = `${PAGE1}
+Weight today: 6.1 lb (scales in lb)
+Diagnosis: Chronic kidney disease, stage 2.
+Distemper / Parvo booster given 03/10/2026`;
+  const pg = [{ page: 1, text: PAGE }];
+  const only = (fact: ReaderAnswer['facts'][number]) => guardAnswer(answer({ facts: [fact] }), pg);
+  it('a weight whose unit is not in its quote is dropped and counted ("6.1 kg" against "6.1 lb")', () => {
+    const g = only({ kind: 'weight', page: 1, quote: 'Weight today: 6.1 lb', fields: { value: '6.1', unit: 'kg' } });
+    expect(g.facts.map((f) => f.kind)).toEqual(['contact']);
+    expect(g.reasons).toEqual(['UNIT_NOT_IN_QUOTE']);
+    expect(only({ kind: 'weight', page: 1, quote: 'Weight today: 6.1 lb', fields: { value: '6.1', unit: 'lb' } }).dropped).toBe(0);
+    expect(unitIn('kg', 'Weight 4.2kg')).toBe(true);
+    expect(unitIn('g', 'Weight 4.2 kg')).toBe(false); // "kg" is not "g"
+    expect(unitIn('lb', '6.1 lbs')).toBe(true);
+  });
+  it('a text value that is not in its quote is dropped ("Cancer" with a quote about kidneys)', () => {
+    const g = only({ kind: 'condition', page: 1, quote: 'Diagnosis: Chronic kidney disease, stage 2.', fields: { name: 'Cancer' } });
+    expect(g.reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
+    const ok = only({ kind: 'condition', page: 1, quote: 'Diagnosis: Chronic kidney disease, stage 2.', fields: { name: 'chronic KIDNEY disease', condition_status: 'ACTIVE' } });
+    expect(ok.dropped).toBe(0); // case-insensitive; the coded status is the reader's label, not printed text
+  });
+  it('a quote shorter than 8 characters proves nothing: "." for Cancer, "e" for Distemper are dropped', () => {
+    expect(only({ kind: 'condition', page: 1, quote: '.', fields: { name: 'Cancer' } }).reasons).toEqual(['QUOTE_TOO_SHORT']);
+    expect(only({ kind: 'vaccination', page: 1, quote: 'e', fields: { vaccine: 'Distemper' } }).reasons).toEqual(['QUOTE_TOO_SHORT']);
+    expect(only({ kind: 'vaccination', page: 1, quote: 'Distemper / Parvo booster given 03/10/2026', fields: { vaccine: 'Distemper' } }).dropped).toBe(0);
+  });
+  it('a clinic name not in its own quote is dropped', () => {
+    const g = guardAnswer(answer({ provider: { name: 'Other Vets Ltd', phone: null, page: 1, quote: 'Riverside Veterinary Clinic   Tel 01 555 0101' } }), pages);
+    expect(g.facts.map((f) => f.kind)).not.toContain('contact');
+    expect(g.reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
+  });
+});
+
+describe('finding 4: day and month must be in the quote; dd/mm vs mm/dd is flagged', () => {
+  it('dateIn: unambiguous forms pass, a swapped or missing day/month does not', () => {
+    expect(dateIn('2026-10-03', 'on 2026-10-03')).toBe('OK');
+    expect(dateIn('2026-10-03', 'seen 3rd October 2026')).toBe('OK');
+    expect(dateIn('2026-10-03', 'seen 3 Oct. 2026')).toBe('OK');
+    expect(dateIn('2026-10-03', 'seen October 3, 2026')).toBe('OK');
+    expect(dateIn('2026-10-25', 'seen 25/10/2026')).toBe('OK'); // 25 cannot be a month
+    expect(dateIn('2026-10-25', 'seen 10/25/2026')).toBe('OK'); // only one reading, US order
+    expect(dateIn('2026-10-03', 'seen 03/10/26')).toBe('AMBIGUOUS');
+    expect(dateIn('2026-03-10', 'seen 03/10/2026')).toBe('AMBIGUOUS'); // the swap the review found: never OK
+    expect(dateIn('2026-10-04', 'seen 03/10/2026')).toBe('MISSING');
+    expect(dateIn('2026-10-03', 'Invoice 2026, ref 77')).toBe('MISSING'); // the year alone used to pass
+    expect(dateIn('2026-10-03', 'seen Oct 2026')).toBe('MISSING');
+  });
+  it('a swapped document date (2026-03-10 for 03/10/2026) is flagged, not passed; a missing one is dropped', () => {
+    const g = guardAnswer(answer({ document_date: { value: '2026-03-10', page: 1, quote: 'Invoice date: 03/10/2026' } }), pages);
+    expect(g.flags).toContain('DATE_ORDER_AMBIGUOUS');
+    const m = guardAnswer(answer({ document_date: { value: '2026-11-03', page: 1, quote: 'Invoice date: 03/10/2026' } }), pages);
+    expect(m.document_date).toBeNull();
+    expect(m.reasons).toContain('DATE_NOT_IN_QUOTE');
+    expect(m.flags).toContain('DATE_ASSUMED');
+  });
+  it('a fact date whose day/month is not in its quote is flagged DATE_NOT_IN_QUOTE', () => {
+    const g = guardAnswer(answer({ facts: [{ kind: 'vet_visit', page: 1, quote: 'Invoice date: 03/10/2026', fields: { visit_on: '2026-10-30', kind: 'ROUTINE' } }] }), pages);
+    expect(g.facts.find((f) => f.kind === 'vet_visit')!.flags).toEqual(['DATE_NOT_IN_QUOTE']);
+  });
+});
+
+describe('finding 6: the Claude reader runs with no tools, no MCP servers and (when supported) no slash commands', () => {
+  it('always --tools "" and --strict-mcp-config; --disable-slash-commands only when this CLI lists it', () => {
+    const old = claudeArgs('sonnet', 'Usage: claude [options]\n  --strict-mcp-config ...');
+    expect(old.slice(0, 4)).toEqual(['-p', '--tools', '', '--strict-mcp-config']);
+    expect(old).not.toContain('--disable-slash-commands');
+    expect(old).not.toContain('--mcp-config');
+    expect(claudeArgs('sonnet', '  --disable-slash-commands  Disable all skills')).toContain('--disable-slash-commands');
+    expect(claudeArgs('sonnet', null)).toContain('--strict-mcp-config');
   });
 });
 

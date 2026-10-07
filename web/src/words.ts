@@ -57,6 +57,8 @@ export const FLAG_WORDS: Record<string, string> = {
   NOT_PET_DOCUMENT: 'Does not look like a pet document', POSSIBLE_DUPLICATE: 'Possible duplicate', UNREADABLE: 'Couldn’t read — enter by hand', NO_TEXT_FOUND: 'No text found — enter by hand',
   UNSUPPORTED: 'This kind of file can’t be read', INVOICE_TOTAL_MISMATCH: 'The lines don’t add up to the total — check', DATE_NOT_IN_QUOTE: 'Date not in the quoted words — check', MOVE_FAILED: 'Filed, but the file could not be moved yet — retrying',
   KEEP_ONLY: 'Kept as a document only', PHONE_NOT_IN_QUOTE: 'Phone number not checked',
+  DATE_ORDER_AMBIGUOUS: 'Day/month or month/day? Check the date', UNUSUAL_WEIGHT: 'Very different from the last weight — check',
+  UNUSUAL_CONFIRMED: 'Unusual weight — confirmed as right', FILED_UNDER_NEW_NAME: 'Filed under a new name (that name was taken)',
 };
 export const STATUS_WORDS: Record<string, string> = {
   DISCOVERED: 'Found', READ: 'Waiting to be read', ASSESSED: 'Being read', NEEDS_REVIEW: 'Ready to check', FILED_PENDING: 'Filing', FILED: 'Filed', IGNORED: 'Set aside', ASSESS_FAILED: 'Couldn’t read — enter by hand',
