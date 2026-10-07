@@ -20,6 +20,10 @@ full grammar and vocabulary.
 |---|---|---|---|
 | D1 Petopia core | [Built 2026-10-07T14:22:24Z] stage-render (D51) | install | **2026-10-07 15:40 IST (Cloud/Opus 5.5):** all v1 slices S1-S7 + every review fix deployed (main 61e5b21 after the wrap batch); fresh independent review READY WITH NOTES. Waiting on Ryan: try it on his phone, then say `ready`/`verified`. See the top entry below. |
 
+## 2026-10-07 18:30 IST -- tile bug fixed (Cowork/Sonnet 5.5, Ryan's session)
+
+Ryan: tapping Petopia showed the lock screen, then home. Cause: Synapse's PWA service worker served Synapse's own app shell inside the /petopia/ iframe (nested Synapse = cold-open lock screen, then home). `/petopia/` was missing from `navigateFallbackDenylist` in `Synapse/serenity/vite.config.ts` (Vitalis and Epicure had it). Fixed in Synapse `7127ce5` (pushed), built from a clean export of HEAD (another session has uncommitted D44 review-fix edits in the Synapse tree; NOT shipped) and live. Ryan must fully close and reopen Synapse once so the new service worker takes over. Not yet confirmed by Ryan on his phone.
+
 ## 2026-10-07 15:40 IST -- EXACT STATE (Cloud/Opus 5.5) -- READ THIS ENTRY FIRST
 
 **Stage:** Petopia D1 (Petopia core) reads **deploy** (`kit stage-line D1 --root Petopia`). Filed with `kit advance D1 deploy`, quoting Ryan's 01:32 pre-approval. Next word is Ryan's: `ready`, then `verified`.
