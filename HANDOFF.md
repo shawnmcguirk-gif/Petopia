@@ -18,7 +18,24 @@ full grammar and vocabulary.
 
 | Thread | Last stage completed | Next expected stage | Notes |
 |---|---|---|---|
-| D1 Petopia core | [Spec gate approved 2026-10-07T00:48:32Z] auto-writeback (D33) | build | **2026-10-07 (Cowork/Sonnet, Ryan):** lifted from concept `2026-10-07-petopia`; spec draft 1 by Opus in `docs/specs/D1-petopia-core.md`. Nothing built yet. |
+| D1 Petopia core | [Spec'd 2026-10-07T01:20:34Z] stage-render (D51) | review | **2026-10-07 (Cowork/Sonnet, Ryan):** lifted from concept `2026-10-07-petopia`; spec draft 1 by Opus in `docs/specs/D1-petopia-core.md`. Nothing built yet. |
+
+## 2026-10-07 -- Petopia D1 lifted, spec'd, S1 + S2 built and deployed (Cowork/Sonnet 5.5, Ryan's session)
+
+**State:** D1 reads **review** (build and spec words filed from Ryan's pre-approval, quoted in the receipts). Deployed live: `petopia` DB + role, migrations 001-007, LaunchAgent `com.petopia.engine` on :4400, Caddy `/petopia/`, Synapse tile after Games with Ryan's two hero images. 62 engine tests (real Postgres) + 11 web green on the iMac; no-token and bogus-token both 401 via Caddy; Vitalis and Epicure still 200. Independent review (separate agent): no blockers, "ready to keep deployed". **Not yet seen on a phone by a human; D1 is not verified.**
+
+**Not built:** S3 feeding+weight, S4 vet records, S5 inbox + AI reading, S6 reminders + care log, S7 household/roles UI. D1 stays at review (not deploy) because only S1 + S2 of the planned build are in (stage skill: partial slice is a `note`, not a stage move).
+
+**Owed (from review, should-fix):**
+- Microchip format check in `animals.ts`; return generic text, not raw Postgres text, for 23514/23505 (`errors.ts`).
+- Check the role (`ADD_MEDIA`) before decoding an uploaded photo (`server.ts`).
+- `migrate.sh`: run each file in one transaction (`psql -1`).
+- Commit `engine/schema.sql` (made by migrate.sh on the iMac) for A2.
+- Notes: Home heading with no cards when all animals rehomed/deceased; Google Fonts dependency; stale comment above `petopiaOpen` block in Synapse `App.tsx`.
+
+**Ryan's calls still open:** Q1 Benji's breed/age, Q2 who owns/cares for each pet, Q3 inbox folder, Q4 AI-reading go-ahead, Q5 Synapse migration 059 + two n8n edits (per-person on/off; until then the tile shows for every approved member). The brief->spec file name `SPEC.md` is assumed. Also: Opus's engine commit `007538b` carries a "Claude Opus 5.5" co-author line; Petopia branch `main` is pushed.
+
+**RESUME HERE:** Ryan adds Banoffee on his phone (Synapse > Petopia) and says `verified` or reports what's wrong; then S3 (`docs/specs/D1-petopia-core.md` sec 12.1).
 
 ## 2026-10-07 — scaffolded
 

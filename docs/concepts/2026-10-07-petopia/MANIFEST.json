@@ -2,23 +2,31 @@
   "schema": "concept/1",
   "slug": "2026-10-07-petopia",
   "opened": "2026-10-07",
-  "closed_exploring": null,
+  "closed_exploring": "2026-10-07 (lifted to Petopia D1 on Ryan's word)",
   "by": "ryan",
   "target_project": "petopia",
-  "anchors": [],
+  "anchors": [
+    {
+      "project": "petopia",
+      "d_number": "D1"
+    }
+  ],
   "artifacts": [],
   "options_produced": 0,
   "options_requested": 0,
   "annotations": 0,
   "questions": 0,
   "request": "REQUEST.md",
-  "proposal": null,
+  "proposal": "docs/specs/D1-petopia-core.md",
   "outcome": null,
   "files": {
     "REQUEST.md": "7233b6bfb337937f2c3c8f8ae3357966d4a444ff5dd743706459219edb7b12ba",
     "reference/petopia-hero.png": "c9eff6a80083f15c1506735c357ee02efe338e3f95960f183aad21e3975a26b5",
-    "reference/petopia-hero-portrait.png": "11112cd57d5a1a18d6adbbdf0c92b2780da0d65812e55a0340cd8f8a9af8186d"
+    "reference/petopia-hero-portrait.png": "11112cd57d5a1a18d6adbbdf0c92b2780da0d65812e55a0340cd8f8a9af8186d",
+    "SPEC.md": "6c43fe5041d0c2b3fc3b29e2bd4b739069a3f8fd4cf73eb83f11db661753e128",
+    "QUESTIONS.md": "b53524653d94eb17c5a64b7ea1724a3b0d4f52760e2d6f17072830ad9c3a70eb",
+    "annotations.md": "cff947311c16a67eeadad4fcb2315bb1e0e4d101756317b45cadaf809e2f1b75"
   },
   "receipts_through": null,
-  "note": "Opened 2026-10-07. REQUEST.md captured verbatim (Ryan's 30-section 'Synapse - Petopia' design brief). reference/ holds two hero images Ryan supplied (landscape 'hero for the app' with tagline; portrait variant, same scene, no tagline, brighter green logo -- portrait use not yet stated). Questions pending (QUESTIONS.md empty until answered): brief-first vs visual-first; are Banoffee/Benji real pets, other species to plan for. No options made, no brief written yet."
+  "note": "Lifted to Petopia D1. SPEC.md is Opus draft 1 (copy at docs/specs/D1-petopia-core.md). S1+S2 built and deployed 2026-10-07; independent review: no blockers; not human-verified. See HANDOFF.md."
 }
