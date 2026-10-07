@@ -9,8 +9,9 @@
 //   - a weight whose UNIT is not a whole word of its quote is DROPPED ("6.1 kg" against a quote saying "6.1 lb");
 //   - a text value (a vaccine, a condition, a vet's name ...) must be in its quote as whole words (normalised,
 //     case-insensitive: "Cat" is not in "Category"; enum codes such as ROUTINE / ACTIVE are the reader's labels, not
-//     printed text). One that is not is BLANKED and the fact FLAGGED FIELD_NOT_IN_QUOTE for a person to check; only
-//     when a REQUIRED field is blanked is the whole fact DROPPED (VALUE_NOT_IN_QUOTE);
+//     printed text). One that is not is BLANKED (null) and the fact FLAGGED FIELD_NOT_IN_QUOTE for a person to check;
+//     the whole fact is DROPPED (VALUE_NOT_IN_QUOTE) when a REQUIRED field is blanked, or when nothing printed is left
+//     (only the reader's codes, e.g. {kind: EMERGENCY});
 //   - a date must have its day, month and year in its quote (02/10/2026, 2 Oct 2026, 2026-10-02 ...). When the quote's
 //     numbers could be day/month OR month/day (03/10/2026), the value is FLAGGED DATE_ORDER_AMBIGUOUS for a person to
 //     check, never passed silently; a date whose day or month is not in the quote is flagged DATE_NOT_IN_QUOTE (a fact)
@@ -118,18 +119,26 @@ function numbersOk(fields: Record<string, unknown>, quote: string): boolean {
 }
 const lc = (x: string): string => normText(x).toLowerCase();
 const escapeRe = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** Is `value` in `quote` as whole words (normalised, case-insensitive)? "Feline enteritis" yes; "Cat" in "Category" no. */
-export function wordsIn(value: string, quote: string): boolean {
-  const v = lc(value);
-  if (!v) return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(v)}(?![\\p{L}\\p{N}])`, 'u').test(lc(quote));
+/**
+ * Is `value` in `quote` as whole words (normalised, case-insensitive)? "Feline enteritis" yes; "Cat" in "Category" no.
+ * Trailing punctuation on the value is ignored ("Byrne." is "Byrne"); a value under 2 characters proves nothing.
+ * `unitLike`: a unit may be printed against its number ("25mg", "5.2mmol/L"), so a digit may come right before it.
+ */
+export function wordsIn(value: string, quote: string, unitLike = false): boolean {
+  const v = lc(value).replace(/[.,;:]+$/, '');
+  if (v.length < 2) return false;
+  const before = unitLike ? '(?<![\\p{L}])' : '(?<![\\p{L}\\p{N}])';
+  return new RegExp(`${before}${escapeRe(v)}(?![\\p{L}\\p{N}])`, 'u').test(lc(quote));
 }
 /** The text fields whose value is NOT in the quote. Numbers, dates and coded fields are checked elsewhere. */
 function textsMissing(fields: Record<string, unknown>, quote: string): string[] {
   return Object.entries(fields)
-    .filter(([k, v]) => typeof v === 'string' && !NUMBER_FIELDS.has(k) && !DATE_FIELDS.has(k) && !CODE_FIELDS.has(k) && !wordsIn(v, quote))
+    .filter(([k, v]) => typeof v === 'string' && !NUMBER_FIELDS.has(k) && !DATE_FIELDS.has(k) && !CODE_FIELDS.has(k) && !wordsIn(v, quote, /unit/.test(k)))
     .map(([k]) => k);
 }
+/** Does the fact still carry something printed on the page (a text, number or date), not only the reader's codes? */
+const hasPrintedValue = (fields: Record<string, unknown>): boolean =>
+  Object.entries(fields).some(([k, v]) => v !== null && v !== undefined && v !== '' && !CODE_FIELDS.has(k));
 /** The ways a weight unit is printed. The unit must be a whole word of the quote ("6.1kg" counts; "kg" is not "g"). */
 const UNIT_WORDS: Record<string, string[]> = {
   kg: ['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms', 'kilogramme', 'kilogrammes'],
@@ -245,11 +254,14 @@ export function guardAnswer(a: ReaderAnswer, pageTexts: PageText[]): Guarded {
     const ff: string[] = [];
     const missing = textsMissing(fields, f.quote);
     if (missing.length) {
-      // blank only what the quote does not show; a fact that then lacks a required field is dropped
-      for (const k of missing) delete fields[k];
+      // blank only what the quote does not show (null, so the Correct form still offers the box); a fact that then
+      // lacks a required field is dropped
+      for (const k of missing) fields[k] = null;
       if (!fieldsFit(f.kind, fields)) { drop('VALUE_NOT_IN_QUOTE'); continue; }
       ff.push('FIELD_NOT_IN_QUOTE');
     }
+    // a fact must keep something printed on the page; the reader's codes alone ({kind: EMERGENCY}) prove nothing
+    if (!hasPrintedValue(fields)) { drop('VALUE_NOT_IN_QUOTE'); continue; }
     for (const [k, v] of Object.entries(fields)) {
       if (!DATE_FIELDS.has(k) || typeof v !== 'string') continue;
       const dc = dateIn(v, f.quote);

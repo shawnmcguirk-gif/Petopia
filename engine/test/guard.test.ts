@@ -137,10 +137,17 @@ Distemper / Parvo booster given 03/10/2026`;
     const g = only({ kind: 'vet_visit', page: 1, quote: 'Invoice date: 03/10/2026', fields: { visit_on: '2026-10-03', kind: 'ROUTINE', vet_name: 'Dr. Byrne', reason: 'Annual check' } });
     expect(g.dropped).toBe(0);
     const v = g.facts.find((f) => f.kind === 'vet_visit')!;
-    expect(v.fields).toMatchObject({ visit_on: '2026-10-03', kind: 'ROUTINE' });
-    expect(v.fields).not.toHaveProperty('vet_name');
-    expect(v.fields).not.toHaveProperty('reason');
+    expect(v.fields).toMatchObject({ visit_on: '2026-10-03', kind: 'ROUTINE', vet_name: null, reason: null }); // null: the Correct form still offers the box
     expect(v.flags).toContain('FIELD_NOT_IN_QUOTE');
+    // nothing printed left -- only the reader's codes -- is dropped, never one tap from being filed
+    expect(only({ kind: 'vet_visit', page: 1, quote: 'Consultation  45.00', fields: { kind: 'EMERGENCY', reason: 'Hit by car' } }).reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
+    expect(only({ kind: 'treatment', page: 1, quote: 'Vaccine  30.50', fields: { kind: 'WORM' } }).reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
+    // units printed against the number, trailing punctuation, and too-short values
+    expect(wordsIn('mg', 'Metacam 25mg once daily', true)).toBe(true);
+    expect(wordsIn('mmol/L', 'Glucose 5.2mmol/L', true)).toBe(true);
+    expect(wordsIn('mg', 'Metacam 25mg once daily')).toBe(false); // not unit-like: whole words only
+    expect(wordsIn('Byrne.', 'seen by Dr Byrne today')).toBe(true);
+    expect(wordsIn('a', 'a cat')).toBe(false);
     // a REQUIRED field (the vaccine) not in the quote still drops the fact
     expect(only({ kind: 'vaccination', page: 1, quote: 'Vaccination: Feline enteritis  next due 03/10/2027', fields: { vaccine: 'Rabies' } }).reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
   });
