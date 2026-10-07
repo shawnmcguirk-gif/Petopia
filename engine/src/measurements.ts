@@ -37,7 +37,7 @@ const checkNew = bodyChecker<NewMeasurement>(S.object({
 }, ['measure', 'value', 'unit']));
 
 /** observed_at for a day-precision reading: midday UTC, which is the same calendar day in Dublin all year. */
-const middayOf = (d: string): string => `${d}T12:00:00Z`;
+export const middayOf = (d: string): string => `${d}T12:00:00Z`;
 
 export async function listMeasurements(c: Client, animalId: number, member: string, measure?: string): Promise<MeasurementView[]> {
   await requireOn(c, animalId, member, 'VIEW');
@@ -56,14 +56,14 @@ export async function listMeasurements(c: Client, animalId: number, member: stri
     .map((x) => ({ ...x, id: Number(x.id) }));
 }
 
-async function moduleOfAnimal(c: Client, animalId: number): Promise<string> {
+export async function moduleOfAnimal(c: Client, animalId: number): Promise<string> {
   const r = await c.query<{ module_code: string }>('SELECT module_code FROM animal.animal WHERE animal_id = $1', [animalId]);
   if (!r.rows[0]) throw notFound('no such animal');
   return r.rows[0].module_code;
 }
 
 /** The nearest confirmed reading at or before `on` (else the first one after it): what a new reading is compared with. */
-async function previousReading(c: Client, animalId: number, measure: string, on: string): Promise<Previous | null> {
+export async function previousReading(c: Client, animalId: number, measure: string, on: string): Promise<Previous | null> {
   const r = await c.query<{ value: string; unit: string; on: string }>(
     `SELECT value::text, unit, to_char(observed_at AT TIME ZONE 'Europe/Dublin', 'YYYY-MM-DD') AS on FROM health.measurement
       WHERE animal_id = $1 AND measure = $2 AND status = 'CONFIRMED'

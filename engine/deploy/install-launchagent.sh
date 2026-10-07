@@ -30,6 +30,12 @@ d = {
     "PETOPIA_DATABASE_URL": os.environ["PETOPIA_DATABASE_URL"],
     "VAULT_ROOT": os.environ.get("VAULT_ROOT", os.path.expanduser("~/Library/CloudStorage/OneDrive-SharedLibraries-onedrive/Documents/Obsidian/household")),
     "PETOPIA_ADMINS": os.environ.get("PETOPIA_ADMINS", ""),
+    # S5 inbox (defaults copied from Vitalis's LaunchAgent): OCR on the Alienware over Tailscale, PyMuPDF from the
+    # Truehaven venv Vitalis already uses, `claude -p` inside the n8n container (as Vitalis insight.ts).
+    "OLLAMA_URL": os.environ.get("OLLAMA_URL", "http://100.79.2.83:11434"),
+    "PETOPIA_PYTHON": os.environ.get("PETOPIA_PYTHON", os.path.expanduser("~/dev/Truehaven/extract/.venv/bin/python3")),
+    **{k: os.environ[k] for k in ("PETOPIA_CLAUDE_CMD", "PETOPIA_READER_MODEL", "PETOPIA_LOCAL_READER_MODEL", "OCR_MODEL", "PETOPIA_SWEEP_SECONDS",
+                                  "PETOPIA_SERVICE_SECRET", "PETOPIA_EVENTS_URL") if os.environ.get(k)},
     **({"PETOPIA_REQUIRE_FEATURE": os.environ["PETOPIA_REQUIRE_FEATURE"]} if os.environ.get("PETOPIA_REQUIRE_FEATURE") else {}),
     **({"PETOPIA_AUTH_VERIFY_URL": os.environ["PETOPIA_AUTH_VERIFY_URL"]} if os.environ.get("PETOPIA_AUTH_VERIFY_URL") else {}),
   },

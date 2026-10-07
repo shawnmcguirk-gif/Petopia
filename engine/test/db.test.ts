@@ -43,12 +43,12 @@ describe.skipIf(!URL_)('database rules (S1)', () => {
     expect(r.rows[0]!.ok).toBe(false);
   });
 
-  it('A3: every content table has FORCE RLS (only the access_grant gate and ref.* do not)', async () => {
+  it('A3: every content table has FORCE RLS (only the access_grant and vault_folder_binding gates and ref.* do not)', async () => {
     const r = await withTxn(null, true, (c) => c.query<{ t: string; rls: boolean; force: boolean }>(
       `SELECT n.nspname || '.' || c.relname AS t, c.relrowsecurity AS rls, c.relforcerowsecurity AS force
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind = 'r' AND n.nspname IN ('core','animal','media','ingest')`));
-    const missing = r.rows.filter((x) => x.t !== 'core.access_grant' && !(x.rls && x.force)).map((x) => x.t);
+    const missing = r.rows.filter((x) => !['core.access_grant', 'core.vault_folder_binding'].includes(x.t) && !(x.rls && x.force)).map((x) => x.t);
     expect(missing).toEqual([]);
     expect(r.rows.map((x) => x.t)).toEqual(expect.arrayContaining(['core.workspace', 'core.habitat', 'core.animal_role', 'animal.animal', 'media.item', 'ingest.source_document']));
   });
@@ -171,7 +171,7 @@ describe.skipIf(!URL_)('database rules (S1)', () => {
     const as = (m: string) => ({ 'x-petopia-test-member': m, 'content-type': 'application/json' });
 
     it('a member with no grant gets household null and 403 elsewhere', async () => {
-      expect(await (await fetch(`${base}/api/me`, { headers: as(who('nobody')) })).json()).toEqual({ member: who('nobody'), household: null });
+      expect(await (await fetch(`${base}/api/me`, { headers: as(who('nobody')) })).json()).toEqual({ member: who('nobody'), household: null, admin: false });
       expect((await fetch(`${base}/api/animals`, { headers: as(who('nobody')) })).status).toBe(403);
     });
     it('POST /api/animals for Biscuit (born 2018, YEAR) returns "about N years"; PATCH and GET work', async () => {

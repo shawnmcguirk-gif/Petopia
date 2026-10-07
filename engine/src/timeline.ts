@@ -30,13 +30,15 @@ export interface TimelineEntry {
   detail: string | null;
   badge: Badge;
   ref: { table: string; id: number };
+  /** The original document and page this came from (sec 4.4), when it was read from one. */
+  source: { document_id: number; page: number | null } | null;
 }
 
 export async function getTimeline(c: Client, animalId: number, member: string, category?: string): Promise<TimelineEntry[]> {
   await requireOn(c, animalId, member, 'VIEW');
   if (category !== undefined && !(CATEGORIES as readonly string[]).includes(category)) throw bad(`category must be one of ${CATEGORIES.join(', ')}`);
-  const r = await c.query<{ on_date: string; precision: Precision; category: string; kind: string; title: string; detail: string | null; source_class: string; status: string; channel: string; ref_table: string; ref_id: string }>(
-    `SELECT on_date, precision, category, kind, title, detail, source_class, status, channel, ref_table, ref_id::text
+  const r = await c.query<{ on_date: string; precision: Precision; category: string; kind: string; title: string; detail: string | null; source_class: string; status: string; channel: string; ref_table: string; ref_id: string; source_document_id: string | null; source_page: number | null }>(
+    `SELECT on_date, precision, category, kind, title, detail, source_class, status, channel, ref_table, ref_id::text, source_document_id::text, source_page
        FROM timeline.entry_v WHERE animal_id = $1 AND ($2::text IS NULL OR category = $2)
       ORDER BY on_date DESC, created_at DESC`,
     [animalId, category ?? null],
@@ -44,5 +46,6 @@ export async function getTimeline(c: Client, animalId: number, member: string, c
   return r.rows.map((x) => ({
     on: formatVagueDate(x.on_date, x.precision) ?? x.on_date, sort_on: x.on_date, year: x.on_date.slice(0, 4), category: x.category, kind: x.kind,
     label: kindWords(x.kind), title: x.title, detail: x.detail, badge: badgeFor(x), ref: { table: x.ref_table, id: Number(x.ref_id) },
+    source: x.source_document_id ? { document_id: Number(x.source_document_id), page: x.source_page } : null,
   }));
 }

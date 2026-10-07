@@ -14,7 +14,8 @@ const TTL_MS = 60_000;
 const MAX_CACHED = 500;
 const cache = new Map<string, { at: number; verdict: Verdict }>();
 
-export type Verdict = { ok: true; member: string } | { ok: false; status: 401 | 403; reason: string };
+/** persona: Synapse's persona_key for the member (Vitalis auth.ts), used to put vet appointments on their calendar (S6). */
+export type Verdict = { ok: true; member: string; persona?: string } | { ok: false; status: 401 | 403; reason: string };
 
 export const authOff = (): boolean => process.env.PETOPIA_AUTH === 'off';
 export const isProduction = (): boolean => process.env.NODE_ENV === 'production';
@@ -45,12 +46,12 @@ export async function authorise(token: string | undefined, testMember?: string):
       body: JSON.stringify({ device_token: token }),
       signal: AbortSignal.timeout(5000),
     });
-    const body = (await res.json()) as { ok?: boolean; member_name?: unknown; allowed_features?: unknown };
+    const body = (await res.json()) as { ok?: boolean; member_name?: unknown; persona_key?: unknown; allowed_features?: unknown };
     const name = typeof body.member_name === 'string' ? body.member_name.trim() : '';
     if (!res.ok || body.ok !== true || !name) verdict = { ok: false, status: 401, reason: 'device not approved' };
     else if (process.env.PETOPIA_REQUIRE_FEATURE === 'on' && (!Array.isArray(body.allowed_features) || !body.allowed_features.includes('petopia')))
       verdict = { ok: false, status: 403, reason: 'feature not granted' };
-    else verdict = { ok: true, member: name };
+    else verdict = { ok: true, member: name, ...(typeof body.persona_key === 'string' && body.persona_key ? { persona: body.persona_key } : {}) };
   } catch {
     return { ok: false, status: 401, reason: 'verifier unreachable' }; // not cached: retry next request
   }

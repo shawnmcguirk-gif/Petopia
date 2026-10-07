@@ -25,6 +25,6 @@ for f in migrations/*.sql; do
   { cat "$f"; printf "\nINSERT INTO public.schema_migrations (filename) VALUES ('%s');\n" "$b"; } | "${PSQL[@]}" -1 -f -   # -1 applies only with -f/-c, so stdin is read as "-f -"
 done
 if [[ "${1:-}" != "--status" && "$DB" == "petopia" ]]; then
-  docker exec postgres pg_dump -U "$USER_" -d "$DB" --schema-only --no-owner --no-privileges -n core -n ref -n animal -n media -n ingest -n health -n diet -n timeline > schema.sql
+  docker exec postgres pg_dump -U "$USER_" -d "$DB" --schema-only --no-owner --no-privileges -n core -n ref -n animal -n media -n ingest -n health -n diet -n timeline -n care > schema.sql
   echo "schema.sql refreshed ($(wc -l < schema.sql) lines)"
 fi

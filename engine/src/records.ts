@@ -131,8 +131,8 @@ export async function checkVisit(c: Client, animalId: number, id: number | null)
   if (!r.rowCount) throw bad('that vet visit is not one of this animal\'s');
 }
 
-/** Body -> column values, with every rule of the registry applied. */
-async function columns(c: Client, kind: Kind, animalId: number, body: unknown, today: string): Promise<{ cols: Record<string, unknown>; source: ManualSource }> {
+/** Body -> column values, with every rule of the registry applied. Also used by the inbox when it files a document. */
+export async function recordColumns(c: Client, kind: Kind, animalId: number, body: unknown, today: string): Promise<{ cols: Record<string, unknown>; source: ManualSource }> {
   const d: KindDef = KINDS[kind];
   const b = check(kind, body);
   const cols: Record<string, unknown> = {};
@@ -227,7 +227,7 @@ async function setStatus(c: Client, kind: Kind, id: number, status: 'CONFIRMED' 
 /** Add a record. Owner / Primary carer: confirmed by them. Family member: a proposal. Viewer: 403. */
 export async function addRecord(c: Client, ws: number, kind: Kind, animalId: number, member: string, body: unknown, today = todayIso(), supersedes: number | null = null): Promise<RecordView> {
   const role: Role = await requireOn(c, animalId, member, 'PROPOSE_RECORDS');
-  const { cols, source } = await columns(c, kind, animalId, body, today);
+  const { cols, source } = await recordColumns(c, kind, animalId, body, today);
   const confirm = can(role, 'CONFIRM_RECORDS');
   const d: KindDef = KINDS[kind];
   const id = await insertRow(c, d.table, d.pk, {

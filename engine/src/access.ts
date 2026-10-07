@@ -147,3 +147,45 @@ export async function endAnimalRole(c: Client, ws: number, animalId: number, mem
   if (leavesNoOwner(await lockedRoles(c, animalId), member, null)) throw conflict('the last Owner cannot leave; make someone else an Owner first');
   await writeRole(c, ws, animalId, member, null, actor);
 }
+
+// ---------------- household-wide checks (S5-S7 routes that are not about one animal) ----------------
+
+/**
+ * May this member do `action` for at least one animal? True in a household with no animals yet (nobody is a Viewer of
+ * anything). A member who is Viewer on every animal is a "household Viewer": every such check refuses them (A27).
+ */
+export async function canAny(c: Client, member: string, action: Action): Promise<boolean> {
+  const r = await c.query<{ role: Role | null }>(
+    `SELECT r.role FROM animal.animal a
+       LEFT JOIN core.animal_role r ON r.workspace_id = a.workspace_id AND r.animal_id = a.animal_id AND r.member_name = $1 AND r.to_on IS NULL`,
+    [member],
+  );
+  if (r.rows.length === 0) return true;
+  return r.rows.some((x) => can(effectiveRole(x.role), action));
+}
+
+export async function requireAny(c: Client, member: string, action: Action, message = 'your role does not allow that'): Promise<void> {
+  if (!(await canAny(c, member, action))) throw forbidden(message);
+}
+
+/** Owner or Primary carer of at least one animal (contacts, habitats -- the people who manage care). */
+export async function managesAny(c: Client, member: string): Promise<boolean> {
+  const r = await c.query("SELECT 1 FROM core.animal_role WHERE member_name = $1 AND to_on IS NULL AND role IN ('OWNER','PRIMARY_CARER') LIMIT 1", [member]);
+  return (r.rowCount ?? 0) > 0;
+}
+
+export const isAdmin = (member: string, admins = adminsFromEnv()): boolean => admins.includes(member);
+
+/** Ends a member's household access (admin only, never yourself). Their animal roles stay as history. */
+export async function revokeHousehold(c: Client, ws: number, member: string, actor: string, admins = adminsFromEnv()): Promise<void> {
+  if ((await householdOf(c, actor)) !== ws || !admins.includes(actor)) throw forbidden('only a household admin can take access away');
+  if (member === actor) throw conflict('you cannot take away your own access');
+  const owns = await c.query<{ animal_id: string }>(
+    "SELECT animal_id::text FROM core.animal_role WHERE member_name = $1 AND role = 'OWNER' AND to_on IS NULL", [member]);
+  for (const o of owns.rows) {
+    if (leavesNoOwner(await lockedRoles(c, Number(o.animal_id)), member, null)) throw conflict('that person is the only Owner of an animal; make someone else its Owner first');
+  }
+  const r = await c.query('UPDATE core.access_grant SET revoked_at = now(), revoked_by = $3 WHERE workspace_id = $1 AND member_name = $2 AND revoked_at IS NULL', [ws, member, actor]);
+  if (!r.rowCount) throw notFound('that person has no access to take away');
+  await c.query('UPDATE core.animal_role SET to_on = current_date WHERE member_name = $1 AND to_on IS NULL', [member]);
+}
