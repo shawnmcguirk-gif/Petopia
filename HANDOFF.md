@@ -24,6 +24,8 @@ full grammar and vocabulary.
 
 Ryan: tapping Petopia showed the lock screen, then home. Cause: Synapse's PWA service worker served Synapse's own app shell inside the /petopia/ iframe (nested Synapse = cold-open lock screen, then home). `/petopia/` was missing from `navigateFallbackDenylist` in `Synapse/serenity/vite.config.ts` (Vitalis and Epicure had it). Fixed in Synapse `7127ce5` (pushed), built from a clean export of HEAD (another session has uncommitted D44 review-fix edits in the Synapse tree; NOT shipped) and live. Ryan must fully close and reopen Synapse once so the new service worker takes over. Not yet confirmed by Ryan on his phone.
 
+**18:45 IST follow-up:** next, Ryan (signed in as `shawn`) got "not part of the household": `PETOPIA_ADMINS` was `Ryan`, but Synapse member names are lowercase (`shawn`, `ryan`) and the engine's match is exact (case-sensitive; Vitalis lowercases, Petopia does not). Set `PETOPIA_ADMINS=shawn,ryan` in `engine/.env` and the LaunchAgent plist, engine restarted; the household grant is created on the admin's next request. `core.access_grant` was empty before. Not yet confirmed on a phone. Open: make `adminsFromEnv`/`includes` case-insensitive like Vitalis.
+
 ## 2026-10-07 15:40 IST -- EXACT STATE (Cloud/Opus 5.5) -- READ THIS ENTRY FIRST
 
 **Stage:** Petopia D1 (Petopia core) reads **deploy** (`kit stage-line D1 --root Petopia`). Filed with `kit advance D1 deploy`, quoting Ryan's 01:32 pre-approval. Next word is Ryan's: `ready`, then `verified`.
