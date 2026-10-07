@@ -121,22 +121,28 @@ const lc = (x: string): string => normText(x).toLowerCase();
 const escapeRe = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /**
  * Is `value` in `quote` as whole words (normalised, case-insensitive)? "Feline enteritis" yes; "Cat" in "Category" no.
- * Trailing punctuation on the value is ignored ("Byrne." is "Byrne"); a value under 2 characters proves nothing.
+ * Trailing punctuation on the value is ignored ("Byrne." is "Byrne"); a value under `minLen` characters proves nothing
+ * (2 for free text; 1 for a printed lab value or flag, "5" or "H", whose numbers are already checked).
  * `unitLike`: a unit may be printed against its number ("25mg", "5.2mmol/L"), so a digit may come right before it.
  */
-export function wordsIn(value: string, quote: string, unitLike = false): boolean {
+export function wordsIn(value: string, quote: string, unitLike = false, minLen = 2): boolean {
   const v = lc(value).replace(/[.,;:]+$/, '');
-  if (v.length < 2) return false;
+  if (v.length < minLen) return false;
   const before = unitLike ? '(?<![\\p{L}])' : '(?<![\\p{L}\\p{N}])';
   return new RegExp(`${before}${escapeRe(v)}(?![\\p{L}\\p{N}])`, 'u').test(lc(quote));
 }
 /** The text fields whose value is NOT in the quote. Numbers, dates and coded fields are checked elsewhere. */
 function textsMissing(fields: Record<string, unknown>, quote: string): string[] {
   return Object.entries(fields)
-    .filter(([k, v]) => typeof v === 'string' && !NUMBER_FIELDS.has(k) && !DATE_FIELDS.has(k) && !CODE_FIELDS.has(k) && !wordsIn(v, quote, /unit/.test(k)))
+    .filter(([k, v]) => typeof v === 'string' && !NUMBER_FIELDS.has(k) && !DATE_FIELDS.has(k) && !CODE_FIELDS.has(k)
+      && !wordsIn(v, quote, /unit/.test(k), SHORT_PRINTED.has(k) ? 1 : 2))
     .map(([k]) => k);
 }
-/** Does the fact still carry something printed on the page (a text, number or date), not only the reader's codes? */
+/** Printed values that are legitimately one character ("5" mmol/L, the "H" flag on a lab line). */
+const SHORT_PRINTED = new Set(['value_printed', 'flag_printed']);
+/** Does the fact still carry something printed on the page (a text, number or date), not only the reader's codes?
+ *  A date that failed its check still counts: a real visit whose date was misread is kept, flagged DATE_NOT_IN_QUOTE,
+ *  for the person to correct (known item: a made-up visit with a wrong date survives the same way, double-flagged). */
 const hasPrintedValue = (fields: Record<string, unknown>): boolean =>
   Object.entries(fields).some(([k, v]) => v !== null && v !== undefined && v !== '' && !CODE_FIELDS.has(k));
 /** The ways a weight unit is printed. The unit must be a whole word of the quote ("6.1kg" counts; "kg" is not "g"). */

@@ -148,6 +148,10 @@ Distemper / Parvo booster given 03/10/2026`;
     expect(wordsIn('mg', 'Metacam 25mg once daily')).toBe(false); // not unit-like: whole words only
     expect(wordsIn('Byrne.', 'seen by Dr Byrne today')).toBe(true);
     expect(wordsIn('a', 'a cat')).toBe(false);
+    // ...but a printed lab value or flag may be one character ("5" mmol/L, the "H" flag)
+    expect(wordsIn('H', 'ALT 120 U/L H', false, 1)).toBe(true);
+    const lab = guardAnswer(answer({ facts: [{ kind: 'lab_result', page: 1, quote: 'ALT 120 U/L H', fields: { test: 'ALT', value_printed: '120', unit_printed: 'U/L', flag_printed: 'H' } }] }), [{ page: 1, text: `${PAGE1}\nALT 120 U/L H` }]);
+    expect(lab.facts.find((f) => f.kind === 'lab_result')).toMatchObject({ fields: { flag_printed: 'H' }, flags: [] });
     // a REQUIRED field (the vaccine) not in the quote still drops the fact
     expect(only({ kind: 'vaccination', page: 1, quote: 'Vaccination: Feline enteritis  next due 03/10/2027', fields: { vaccine: 'Rabies' } }).reasons).toEqual(['VALUE_NOT_IN_QUOTE']);
   });
