@@ -20,6 +20,45 @@ full grammar and vocabulary.
 |---|---|---|---|
 | D1 Petopia core | [Spec'd 2026-10-07T01:20:34Z] stage-render (D51) | review | **2026-10-07 (Cowork/Sonnet, Ryan):** lifted from concept `2026-10-07-petopia`; spec draft 1 by Opus in `docs/specs/D1-petopia-core.md`. Nothing built yet. |
 
+## 2026-10-07 14:50 IST -- EXACT STATE AT PAUSE (Cowork/Sonnet 5.5, Ryan's session) -- READ THIS ENTRY FIRST
+
+**Stage:** D1 reads **review** (`kit stage-line D1 --root Petopia`). ALL v1 slices S1-S7 are built and DEPLOYED (main @ `5c5d603`, pushed). Nobody has verified it on a phone yet.
+
+**What is live on the iMac:** `petopia` + `petopia_test` DBs with migrations 001-013; LaunchAgent `com.petopia.engine` on :4400; Caddy `/petopia/` (Caddy is on host port 8090); Synapse home tile after Games with Ryan's two hero images (Synapse commit `7d39a42`, pushed). 149 engine tests on real Postgres + 34 web all passed at deploy; no-token and bogus-token both 401; Vitalis and Epicure unaffected.
+
+**Independent review of S3-S7 said NEEDS FIXES FIRST** -- full table with status per finding in `docs/reviews/2026-10-07-s3-s7-review.md` (S1/S2 review: `docs/reviews/2026-10-07-s1-s2-review.md`).
+- The fixes were started by an Opus agent that was cut off by a usage limit. Its unfinished work is committed on **branch `wip/review-fixes-s3-s7` (a5fb4ae)**: guard.ts/reader.ts/inbox.ts/vault.ts/age.ts/care.ts changes, new `migrations/014_review_fixes.sql`, new tests, web InboxItem/format/words. **UNVERIFIED: lint/build/tests never confirmed green; migration 014 never applied anywhere; NOT on main; NOT deployed.**
+- **Risk until fixed:** the deployed inbox still has findings 1-5 (withdrawn consent doesn't stop reading; a Family member can open another person's pre-review item; quote guard too loose; day/month swap; implausible document weight auto-accepted). Nothing is read from documents until a person gives the two go-aheads in the app, so keep the folder-read / AI-reading go-aheads OFF until fixes are deployed.
+
+**RESUME HERE (in order):**
+1. `git -C ~/dev/Petopia checkout wip/review-fixes-s3-s7`; in a scratch copy (or on the iMac via the runner) run `npm ci && npm run lint && npm run build && npm test` in engine/ and web/ (DB tests run on PGlite in the VM; real Postgres only on the iMac). Fix whatever fails, finish findings 1-9, 11, 12 per the review file (finding 10 skipped), add a test per fix.
+2. Merge to main; deploy via the Axiom runner: copy the batch at `Axiom/runner/queue/done/*petopia-d1-deploy-s3-s7-retry.sh` (use `bash ./engine/scripts/migrate.sh`, NOT `./...`: python rewrites drop the exec bit and a failed `&&` chain hid it once). It backs up the DB, migrates petopia_test then petopia, runs real-Postgres tests, rebuilds web, reinstalls the LaunchAgent, checks via http://localhost:8090.
+3. Get a fresh independent review (not the builder) of the fixes; then tell Ryan to open Synapse > Petopia on his phone, add Banoffee and Benji and say `verified` (or `deploy`/`ready` per the stage skill: partial words are NOT used; D1 is at review and the whole planned build is now in, so the next stage word is `deploy`, which Ryan said he pre-approved at 01:32 for this D-number, quote it).
+4. Still open for Ryan (defaults in the spec sec 13): Q1 Benji's breed/age (default: dog, breed unknown), Q2 who owns/cares for each pet (default Ryan Owner of both), Q3 inbox folder (default `<Name>/Pets/inbox/`), Q4 AI-reading go-ahead (default yes but per-person recorded consent in the app), Q5 Synapse feature vocabulary migration 059 + two n8n edits for per-person on/off (not done; tile shows for every approved member until then; `PETOPIA_REQUIRE_FEATURE=on` turns the engine-side check on after 059).
+5. Known-unproven on the real machine: the real `claude -p` call and schema acceptance, glm-ocr, vault folders, the `/webhook/events` calendar push (off until `PETOPIA_SERVICE_SECRET` is set and Synapse accepts it), the n8n container's Claude config (review finding 6).
+
+**Where everything is (all on disk, nothing only in chat):**
+| Thing | Path |
+|---|---|
+| Ryan's brief, verbatim, frozen | `docs/concepts/2026-10-07-petopia/REQUEST.md` |
+| Ryan's two hero images | `docs/concepts/2026-10-07-petopia/reference/petopia-hero.png`, `petopia-hero-portrait.png` |
+| Concept record (questions, annotations, manifest) | same folder: `QUESTIONS.md`, `annotations.md`, `MANIFEST.json` |
+| Design spec (Opus draft 1, 781 lines) | `docs/specs/D1-petopia-core.md` (identical copy: concept folder `SPEC.md`) |
+| Decision record | `DESIGN.md` D1 |
+| Reviews | `docs/reviews/` |
+| Resume prompt | `docs/RESUME-PROMPT.md` |
+| Engine / web / migrations | `engine/`, `web/`, `migrations/` (001-013 on main; 014 only on the WIP branch), `schema.sql` |
+| Synapse wiring | Synapse commit `7d39a42`: `serenity/src/components/SynapseAppGrid.tsx`, `App.tsx`, `PetopiaScreen.tsx`, `MembersAdmin.tsx`, `serenity-web/Caddyfile`, art in `serenity/src/assets/synapse-brand/{final,cards}/` |
+| Deploy batches that worked | `Axiom/runner/queue/done/*petopia-d1-deploy*.sh` and `Axiom/runner/results/*petopia*.log` |
+| DB backup before S3-S7 migrations | `/tmp/petopia-pre-s3s7.sql` on the iMac (temp; may be gone after reboot) |
+
+**Decisions made this session (Ryan's words or defaults):**
+- Banoffee and Benji are real pets (Ryan, 01:30). Benji's breed/age not given.
+- Ryan, 01:32: "that's a lift, build, review, deploy confirmation from me once opus has completed the spec.. no need to ask for confirmation again" -- quoted in the D1 stage receipts. Ryan, 11:27: "go ahead and build" (S3-S7). Not yet said: `verified`.
+- Navigation: Home - Animals - Wildlife (hidden until v2) - Inbox, Ask later (spec sec 8.2). Spec file name `SPEC.md` was assumed, not confirmed.
+- Wildlife, Vet Pack, costs/insurance, assistant (Ask), Discover, Scout are NOT built (v1.1+; spec sec 1.2).
+- Process notes: builders (Opus) repeatedly ignored the required commit trailer (`Co-Authored-By: Claude Sonnet 5.5`); commits cee5df6, 007538b, 216b9d7, d47eae9 carry Opus lines. A builder briefly overwrote live `web/dist/index.html` (restored). Git here needs `device_request_delete_permission` or `mv` of stale `.lock` files to `.git/stale-*`.
+
 ## 2026-10-07 -- Petopia D1 lifted, spec'd, S1 + S2 built and deployed (Cowork/Sonnet 5.5, Ryan's session)
 
 **State:** D1 reads **review** (build and spec words filed from Ryan's pre-approval, quoted in the receipts). Deployed live: `petopia` DB + role, migrations 001-007, LaunchAgent `com.petopia.engine` on :4400, Caddy `/petopia/`, Synapse tile after Games with Ryan's two hero images. 62 engine tests (real Postgres) + 11 web green on the iMac; no-token and bogus-token both 401 via Caddy; Vitalis and Epicure still 200. Independent review (separate agent): no blockers, "ready to keep deployed". **Not yet seen on a phone by a human; D1 is not verified.**
@@ -35,7 +74,7 @@ full grammar and vocabulary.
 
 **Ryan's calls still open:** Q1 Benji's breed/age, Q2 who owns/cares for each pet, Q3 inbox folder, Q4 AI-reading go-ahead, Q5 Synapse migration 059 + two n8n edits (per-person on/off; until then the tile shows for every approved member). The brief->spec file name `SPEC.md` is assumed. Also: Opus's engine commit `007538b` carries a "Claude Opus 5.5" co-author line; Petopia branch `main` is pushed.
 
-**RESUME HERE:** Ryan adds Banoffee on his phone (Synapse > Petopia) and says `verified` or reports what's wrong; then S3 (`docs/specs/D1-petopia-core.md` sec 12.1).
+**(SUPERSEDED by the 14:50 entry above) RESUME HERE:** Ryan adds Banoffee on his phone (Synapse > Petopia) and says `verified` or reports what's wrong; then S3 (`docs/specs/D1-petopia-core.md` sec 12.1).
 
 ## 2026-10-07 — scaffolded
 

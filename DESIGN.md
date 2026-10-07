@@ -88,3 +88,5 @@ Lifted from `docs/concepts/2026-10-07-petopia/` (Ryan's brief frozen in `REQUEST
 D1's own file: `docs/specs/D1-petopia-core.md` (Opus draft 1, 781 lines, NOT yet independently cold-read).
 Same setup as Vitalis: own `petopia` database, TS engine, React web UI at `/petopia/` behind Caddy, tile on the Synapse home menu.
 Lifted document is an already-complete spec draft, not a bare brief. Open at lift: Benji's breed/age (Q1), who owns which pet (Q2), inbox location (Q3), AI-reading go-ahead (Q4), Synapse feature-vocabulary + n8n edits (Q5).
+
+**Pointers (2026-10-07 14:50):** spec `docs/specs/D1-petopia-core.md` (copy: concept folder `SPEC.md`); concept `docs/concepts/2026-10-07-petopia/` (REQUEST.md verbatim, reference/ hero images, QUESTIONS.md, annotations.md, MANIFEST.json); reviews `docs/reviews/`; exact state and resume steps in HANDOFF.md ("EXACT STATE AT PAUSE") and `docs/RESUME-PROMPT.md`. Synapse-side wiring is Petopia-owned, code lives in Synapse commit `7d39a42`. Built: S1-S7 deployed on main `5c5d603`; review fixes unverified on branch `wip/review-fixes-s3-s7`. Open for Ryan: Q1-Q5 (spec sec 13).

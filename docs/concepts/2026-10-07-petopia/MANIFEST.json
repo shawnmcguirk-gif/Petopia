@@ -28,5 +28,5 @@
     "annotations.md": "cff947311c16a67eeadad4fcb2315bb1e0e4d101756317b45cadaf809e2f1b75"
   },
   "receipts_through": null,
-  "note": "Lifted to Petopia D1. SPEC.md is Opus draft 1 (copy at docs/specs/D1-petopia-core.md). S1+S2 built and deployed 2026-10-07; independent review: no blockers; not human-verified. See HANDOFF.md."
+  "note": "Lifted to Petopia D1 (closed_exploring set). S1-S7 built and deployed on main 5c5d603; independent review said needs-fixes; unverified fixes on branch wip/review-fixes-s3-s7 (a5fb4ae). Exact state + resume steps: ../../../HANDOFF.md \"EXACT STATE AT PAUSE\"; prompt: ../../RESUME-PROMPT.md; reviews: ../../reviews/."
 }
