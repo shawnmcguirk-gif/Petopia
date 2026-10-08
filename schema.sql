@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict LUQlqbYOYpSHUa4s5hcLnbjsq4cTA0btBQ19VMxbsWuapp1osPRkv30I1kr26tH
+\restrict GzBq52IsqUciw4XLVJ0rmhv1adj1FbJ3voF8VFQKjPl3CMOe3mcrohLqtyKP4Fz
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -79,6 +79,43 @@ CREATE SCHEMA ref;
 --
 
 CREATE SCHEMA timeline;
+
+
+--
+-- Name: adopt_typed_kinds(); Type: FUNCTION; Schema: animal; Owner: -
+--
+
+CREATE FUNCTION animal.adopt_typed_kinds() RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  seq text := pg_get_serial_sequence('core.workspace', 'workspace_id');
+  lastv bigint; called boolean; ws bigint; n integer := 0;
+  a record; sid bigint; sp record;
+BEGIN
+  EXECUTE format('SELECT last_value, is_called FROM %s', seq) INTO lastv, called;
+  IF NOT called THEN RETURN 0; END IF;
+  FOR ws IN 1..lastv LOOP
+    PERFORM set_config('app.current_workspace_id', ws::text, true);
+    FOR a IN SELECT animal_id, ext->>'species_name' AS typed FROM animal.animal
+              WHERE module_code = 'other' AND coalesce(ext->>'species_name', '') <> ''
+                AND species_id = (SELECT species_id FROM ref.species WHERE common_name = 'Other animal') ORDER BY animal_id LOOP
+      sid := ref.resolve_kind(a.typed);
+      CONTINUE WHEN sid IS NULL;
+      SELECT s.species_id, s.common_name, s.module_code, m.schema_version INTO sp
+        FROM ref.species s JOIN ref.species_module m ON m.code = s.module_code
+       WHERE s.species_id = sid AND s.domain IN ('PET', 'BOTH') AND s.module_code IS NOT NULL;
+      CONTINUE WHEN sp.species_id IS NULL;
+      UPDATE animal.animal SET species_id = sp.species_id, module_code = sp.module_code, ext_schema_version = sp.schema_version,
+             ext = ext - 'species_name', updated_at = now()
+       WHERE animal_id = a.animal_id;
+      n := n + 1;
+      RAISE NOTICE 'adopt_typed_kinds: household %, animal %, "%" is now %', ws, a.animal_id, a.typed, sp.common_name;
+    END LOOP;
+  END LOOP;
+  PERFORM set_config('app.current_workspace_id', '', true);
+  RETURN n;
+END $$;
 
 
 --
@@ -197,6 +234,113 @@ BEGIN
      OR NEW.extraction_method IS DISTINCT FROM OLD.extraction_method OR NEW.source_document_id IS DISTINCT FROM OLD.source_document_id
      OR NEW.proposed_by IS DISTINCT FROM OLD.proposed_by OR NEW.proposed_at IS DISTINCT FROM OLD.proposed_at THEN
     RAISE EXCEPTION 'where a fact came from cannot be rewritten; correct it with a new row' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: loader_guard(); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.loader_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF coalesce(current_setting('petopia.loader', true), '') <> 'on' THEN
+    RAISE EXCEPTION 'this reference table is changed only by the content loader' USING ERRCODE = 'check_violation';
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: loader_guard_truncate(); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.loader_guard_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF coalesce(current_setting('petopia.loader', true), '') <> 'on' THEN
+    RAISE EXCEPTION 'this reference table is changed only by the content loader' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NULL;
+END $$;
+
+
+--
+-- Name: normalise_kind(text); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.normalise_kind(t text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+  SELECT btrim(regexp_replace(
+           regexp_replace(
+             translate(lower(normalize(regexp_replace(t, '[[:space:][:cntrl:]]', ' ', 'g'), NFKC)), '-_/', '   '),
+             '[^[:alnum:] ]', '', 'g'),
+           ' +', ' ', 'g'))
+$$;
+
+
+--
+-- Name: resolve_kind(text); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.resolve_kind(typed text) RETURNS bigint
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  n text := ref.normalise_kind(typed);
+  s text;
+  ids bigint[];
+BEGIN
+  IF n = '' THEN RETURN NULL; END IF;
+  s := CASE WHEN length(n) > 3 AND n LIKE '%s' AND n NOT LIKE '%ss' THEN left(n, -1) END;
+  SELECT array_agg(species_id) INTO ids FROM ref.species WHERE ref.normalise_kind(common_name) = n AND common_name <> 'Other animal';
+  IF cardinality(ids) = 1 THEN RETURN ids[1]; END IF;
+  SELECT array_agg(a.species_id) INTO ids FROM ref.species_alias a JOIN ref.species sp USING (species_id) WHERE a.alias = n AND sp.common_name <> 'Other animal';
+  IF cardinality(ids) = 1 THEN RETURN ids[1]; END IF;
+  IF s IS NOT NULL THEN
+    SELECT array_agg(species_id) INTO ids FROM ref.species WHERE ref.normalise_kind(common_name) = s AND common_name <> 'Other animal';
+    IF cardinality(ids) = 1 THEN RETURN ids[1]; END IF;
+    SELECT array_agg(a.species_id) INTO ids FROM ref.species_alias a JOIN ref.species sp USING (species_id) WHERE a.alias = s AND sp.common_name <> 'Other animal';
+    IF cardinality(ids) = 1 THEN RETURN ids[1]; END IF;
+  END IF;
+  RETURN NULL;
+END $$;
+
+
+--
+-- Name: species_alias_clash(); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.species_alias_clash() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM ref.species WHERE ref.normalise_kind(common_name) = NEW.alias AND species_id <> NEW.species_id) THEN
+    RAISE EXCEPTION 'alias "%" is the name of another species', NEW.alias USING ERRCODE = 'check_violation';
+  END IF;
+  IF EXISTS (SELECT 1 FROM ref.species WHERE species_id = NEW.species_id AND common_name = 'Other animal') THEN
+    RAISE EXCEPTION 'the "Other animal" placeholder cannot have aliases' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: species_name_clash(); Type: FUNCTION; Schema: ref; Owner: -
+--
+
+CREATE FUNCTION ref.species_name_clash() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM ref.species_alias WHERE alias = ref.normalise_kind(NEW.common_name) AND species_id <> NEW.species_id) THEN
+    RAISE EXCEPTION 'species name "%" is already an alias of another species', NEW.common_name USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -491,7 +635,7 @@ CREATE TABLE core.consent_event (
     given boolean NOT NULL,
     words_shown text NOT NULL,
     at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT consent_event_kind_check CHECK ((kind = ANY (ARRAY['FOLDER_READ'::text, 'AI_READING'::text])))
+    CONSTRAINT consent_event_kind_check CHECK ((kind = ANY (ARRAY['FOLDER_READ'::text, 'AI_READING'::text, 'ABOUT_DRAFT'::text])))
 );
 
 ALTER TABLE ONLY core.consent_event FORCE ROW LEVEL SECURITY;
@@ -1651,6 +1795,51 @@ CREATE TABLE ref.species (
 
 
 --
+-- Name: species_about; Type: TABLE; Schema: ref; Owner: -
+--
+
+CREATE TABLE ref.species_about (
+    about_id bigint NOT NULL,
+    species_id bigint NOT NULL,
+    version integer NOT NULL,
+    sections jsonb NOT NULL,
+    checked_on date NOT NULL,
+    written_by text NOT NULL,
+    reviewed_by text,
+    content_hash text NOT NULL,
+    retired_at timestamp with time zone,
+    loaded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT species_about_sections_check CHECK ((jsonb_typeof(sections) = 'object'::text)),
+    CONSTRAINT species_about_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: species_about_about_id_seq; Type: SEQUENCE; Schema: ref; Owner: -
+--
+
+ALTER TABLE ref.species_about ALTER COLUMN about_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME ref.species_about_about_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: species_alias; Type: TABLE; Schema: ref; Owner: -
+--
+
+CREATE TABLE ref.species_alias (
+    alias text NOT NULL,
+    species_id bigint NOT NULL,
+    CONSTRAINT species_alias_alias_check CHECK (((alias <> ''::text) AND (alias = ref.normalise_kind(alias)) AND ((length(alias) >= 2) AND (length(alias) <= 80))))
+);
+
+
+--
 -- Name: species_module; Type: TABLE; Schema: ref; Owner: -
 --
 
@@ -2392,6 +2581,30 @@ ALTER TABLE ONLY ref.measure_unit
 
 
 --
+-- Name: species_about species_about_pkey; Type: CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species_about
+    ADD CONSTRAINT species_about_pkey PRIMARY KEY (about_id);
+
+
+--
+-- Name: species_about species_about_species_id_version_key; Type: CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species_about
+    ADD CONSTRAINT species_about_species_id_version_key UNIQUE (species_id, version);
+
+
+--
+-- Name: species_alias species_alias_pkey; Type: CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species_alias
+    ADD CONSTRAINT species_alias_pkey PRIMARY KEY (alias);
+
+
+--
 -- Name: species species_common_name_key; Type: CONSTRAINT; Schema: ref; Owner: -
 --
 
@@ -2486,10 +2699,24 @@ CREATE INDEX idx_inbox_item_status ON ingest.inbox_item USING btree (workspace_i
 
 
 --
+-- Name: uq_species_about_live; Type: INDEX; Schema: ref; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_species_about_live ON ref.species_about USING btree (species_id) WHERE (retired_at IS NULL);
+
+
+--
 -- Name: uq_species_name_ci; Type: INDEX; Schema: ref; Owner: -
 --
 
 CREATE UNIQUE INDEX uq_species_name_ci ON ref.species USING btree (lower(common_name));
+
+
+--
+-- Name: uq_species_normalised; Type: INDEX; Schema: ref; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_species_normalised ON ref.species USING btree (ref.normalise_kind(common_name));
 
 
 --
@@ -2644,6 +2871,48 @@ CREATE TRIGGER provenance_guard BEFORE INSERT OR UPDATE ON health.vaccination FO
 --
 
 CREATE TRIGGER provenance_guard BEFORE INSERT OR UPDATE ON health.vet_visit FOR EACH ROW EXECUTE FUNCTION core.provenance_guard();
+
+
+--
+-- Name: species_about species_about_loader_guard; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_about_loader_guard BEFORE INSERT OR DELETE OR UPDATE ON ref.species_about FOR EACH ROW EXECUTE FUNCTION ref.loader_guard();
+
+
+--
+-- Name: species_about species_about_truncate_guard; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_about_truncate_guard BEFORE TRUNCATE ON ref.species_about FOR EACH STATEMENT EXECUTE FUNCTION ref.loader_guard_truncate();
+
+
+--
+-- Name: species_alias species_alias_clash; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_alias_clash BEFORE INSERT OR UPDATE ON ref.species_alias FOR EACH ROW EXECUTE FUNCTION ref.species_alias_clash();
+
+
+--
+-- Name: species_alias species_alias_loader_guard; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_alias_loader_guard BEFORE INSERT OR DELETE OR UPDATE ON ref.species_alias FOR EACH ROW EXECUTE FUNCTION ref.loader_guard();
+
+
+--
+-- Name: species_alias species_alias_truncate_guard; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_alias_truncate_guard BEFORE TRUNCATE ON ref.species_alias FOR EACH STATEMENT EXECUTE FUNCTION ref.loader_guard_truncate();
+
+
+--
+-- Name: species species_name_clash; Type: TRIGGER; Schema: ref; Owner: -
+--
+
+CREATE TRIGGER species_name_clash BEFORE INSERT OR UPDATE OF common_name ON ref.species FOR EACH ROW EXECUTE FUNCTION ref.species_name_clash();
 
 
 --
@@ -3383,6 +3652,22 @@ ALTER TABLE ONLY ref.measure_unit
 
 
 --
+-- Name: species_about species_about_species_id_fkey; Type: FK CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species_about
+    ADD CONSTRAINT species_about_species_id_fkey FOREIGN KEY (species_id) REFERENCES ref.species(species_id);
+
+
+--
+-- Name: species_alias species_alias_species_id_fkey; Type: FK CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species_alias
+    ADD CONSTRAINT species_alias_species_id_fkey FOREIGN KEY (species_id) REFERENCES ref.species(species_id);
+
+
+--
 -- Name: species species_module_code_fkey; Type: FK CONSTRAINT; Schema: ref; Owner: -
 --
 
@@ -3753,5 +4038,5 @@ CREATE POLICY workspace_isolation ON media.item USING ((workspace_id = (NULLIF(c
 -- PostgreSQL database dump complete
 --
 
-\unrestrict LUQlqbYOYpSHUa4s5hcLnbjsq4cTA0btBQ19VMxbsWuapp1osPRkv30I1kr26tH
+\unrestrict GzBq52IsqUciw4XLVJ0rmhv1adj1FbJ3voF8VFQKjPl3CMOe3mcrohLqtyKP4Fz
 
