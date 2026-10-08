@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict JRKJF99JOYqYMiZloW1xitkuWmEBj5bdDm2tKjfuHQVMYIj0OJOe9wfcLthxZqZ
+\restrict LUQlqbYOYpSHUa4s5hcLnbjsq4cTA0btBQ19VMxbsWuapp1osPRkv30I1kr26tH
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -2486,6 +2486,13 @@ CREATE INDEX idx_inbox_item_status ON ingest.inbox_item USING btree (workspace_i
 
 
 --
+-- Name: uq_species_name_ci; Type: INDEX; Schema: ref; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_species_name_ci ON ref.species USING btree (lower(common_name));
+
+
+--
 -- Name: log insert_only_guard; Type: TRIGGER; Schema: care; Owner: -
 --
 
@@ -3746,5 +3753,5 @@ CREATE POLICY workspace_isolation ON media.item USING ((workspace_id = (NULLIF(c
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JRKJF99JOYqYMiZloW1xitkuWmEBj5bdDm2tKjfuHQVMYIj0OJOe9wfcLthxZqZ
+\unrestrict LUQlqbYOYpSHUa4s5hcLnbjsq4cTA0btBQ19VMxbsWuapp1osPRkv30I1kr26tH
 
