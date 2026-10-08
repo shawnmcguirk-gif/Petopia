@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict iXTD47XDgP61DlqtBx2CnxoBbWB9FAFcIrXKq8DZN9ENRGWx7TbEfrihRwguDR4
+\restrict JRKJF99JOYqYMiZloW1xitkuWmEBj5bdDm2tKjfuHQVMYIj0OJOe9wfcLthxZqZ
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -1644,6 +1644,7 @@ CREATE TABLE ref.species (
     domain text NOT NULL,
     sensitive boolean DEFAULT false NOT NULL,
     facts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    module_code text,
     CONSTRAINT species_domain_check CHECK ((domain = ANY (ARRAY['PET'::text, 'WILD'::text, 'BOTH'::text]))),
     CONSTRAINT species_group_check CHECK (("group" = ANY (ARRAY['DOG'::text, 'CAT'::text, 'BIRD'::text, 'MAMMAL'::text, 'AMPHIBIAN'::text, 'REPTILE'::text, 'FISH'::text, 'INSECT'::text, 'OTHER'::text])))
 );
@@ -3375,6 +3376,14 @@ ALTER TABLE ONLY ref.measure_unit
 
 
 --
+-- Name: species species_module_code_fkey; Type: FK CONSTRAINT; Schema: ref; Owner: -
+--
+
+ALTER TABLE ONLY ref.species
+    ADD CONSTRAINT species_module_code_fkey FOREIGN KEY (module_code) REFERENCES ref.species_module(code);
+
+
+--
 -- Name: species_module species_module_species_id_fkey; Type: FK CONSTRAINT; Schema: ref; Owner: -
 --
 
@@ -3737,5 +3746,5 @@ CREATE POLICY workspace_isolation ON media.item USING ((workspace_id = (NULLIF(c
 -- PostgreSQL database dump complete
 --
 
-\unrestrict iXTD47XDgP61DlqtBx2CnxoBbWB9FAFcIrXKq8DZN9ENRGWx7TbEfrihRwguDR4
+\unrestrict JRKJF99JOYqYMiZloW1xitkuWmEBj5bdDm2tKjfuHQVMYIj0OJOe9wfcLthxZqZ
 
