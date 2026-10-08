@@ -49,6 +49,20 @@ describe('AnimalForm: any kind of animal', () => {
     await waitFor(() => expect(posted(f)).toMatchObject({ name: 'Hairy', species: 'Other animal', ext: { species_name: 'Tarantula' } }));
   });
 
+  it('switching from "Something else" back to Dog sends no typed kind', async () => {
+    const f = stub();
+    render(<AnimalForm onSaved={() => undefined} />);
+    fireEvent.change(await screen.findByLabelText('Or another kind of animal'), { target: { value: 'Other animal' } });
+    fireEvent.change(screen.getByLabelText('What kind of animal is it?'), { target: { value: 'Tarantula' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Dog' }));
+    expect(screen.queryByLabelText('What kind of animal is it?')).toBeNull();
+    expect((screen.getByLabelText('Or another kind of animal') as HTMLSelectElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Banoffee' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add animal' }));
+    await waitFor(() => expect(posted(f)).toMatchObject({ name: 'Banoffee', species: 'Dog' }));
+    expect(posted(f).ext).toBeUndefined();
+  });
+
   it('Dog and Cat stay one tap, and the breed hint follows the species', async () => {
     const f = stub();
     render(<AnimalForm onSaved={() => undefined} />);
@@ -65,6 +79,8 @@ describe('AnimalForm: any kind of animal', () => {
   it('if the species list cannot load, Dog, Cat and "another kind" are still there', async () => {
     const f = stub(() => reply(500, { error: 'down' }));
     render(<AnimalForm onSaved={() => undefined} />);
+    expect(await screen.findByRole('button', { name: 'Dog' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Cat' })).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Another kind of animal' }));
     expect(screen.getByLabelText('What kind of animal is it?')).toBeTruthy();
     expect(f).toHaveBeenCalledWith('api/species', expect.anything());

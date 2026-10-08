@@ -30,10 +30,17 @@ export const MEASURES: Record<MeasureCode, MeasureDef> = {
 
 /** Wide typing-slip bounds in the stored unit, per species module. Not reference values; never displayed as such. */
 const SANITY: Partial<Record<MeasureCode, Record<string, [number, number]>>> = {
-  weight: { dog: [0.1, 120], cat: [0.05, 15], default: [0.001, 1500] },
+  weight: {
+    dog: [0.1, 120], cat: [0.05, 15], rabbit: [0.05, 12], small_mammal: [0.005, 15], cage_bird: [0.005, 2.5], poultry: [0.1, 15],
+    reptile: [0.001, 120], amphibian: [0.001, 2], aquarium_fish: [0.0005, 10], equine: [15, 1300], default: [0.001, 1500],
+  },
   length: { default: [0.5, 400] },
   height: { default: [0.5, 300] },
 };
+
+/** "a dog", "a rabbit", "a horse": the module in words, with its article. Anything else is just "this animal". */
+const KIND_WORDS: Record<string, string> = { dog: 'a dog', cat: 'a cat', rabbit: 'a rabbit', small_mammal: 'a small animal', cage_bird: 'a bird', poultry: 'a bird', reptile: 'a reptile', amphibian: 'an amphibian', aquarium_fish: 'a fish', equine: 'a horse' };
+const kindOf = (module: string): string => KIND_WORDS[module] ?? 'this animal';
 
 export const isMeasure = (v: unknown): v is MeasureCode => typeof v === 'string' && (MEASURE_CODES as readonly string[]).includes(v);
 
@@ -139,7 +146,7 @@ export function plausibility(n: Normalised, previous: Previous | null, module: s
   return {
     ok: false,
     suggestion: s,
-    question: s ? `${typed} looks unusual for a ${module === 'default' ? 'reading' : module}. Did you mean ${s.value} ${s.unit}?` : `${typed} looks unusual. Is that right?`,
+    question: s ? `${typed} looks unusual for ${kindOf(module)}. Did you mean ${s.value} ${s.unit}?` : `${typed} looks unusual for ${kindOf(module)}. Is that right?`,
   };
 }
 

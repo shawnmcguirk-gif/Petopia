@@ -32,6 +32,9 @@ export const DEFAULT_SCHEDULE: Record<string, { rrule: string; times: string[] }
   WALK: { rrule: 'FREQ=DAILY', times: ['08:00', '18:00'] }, GROOM: { rrule: 'FREQ=WEEKLY', times: [] }, NAILS: { rrule: 'FREQ=MONTHLY', times: [] },
   TEETH: { rrule: 'FREQ=DAILY', times: [] }, FLEA: { rrule: 'FREQ=MONTHLY', times: [] }, WORM: { rrule: 'FREQ=MONTHLY;INTERVAL=3', times: [] },
   VACCINATION: { rrule: 'FREQ=YEARLY', times: [] },
+  // Any-animal (2026-10-08): the other kinds a species module suggests. Without these they fell back to "weekly".
+  FEED: { rrule: 'FREQ=DAILY', times: [] }, BATH: { rrule: 'FREQ=MONTHLY', times: [] }, CAGE_CLEAN: { rrule: 'FREQ=WEEKLY', times: [] },
+  BEDDING: { rrule: 'FREQ=WEEKLY', times: [] }, TANK_CLEAN: { rrule: 'FREQ=WEEKLY', times: [] }, WATER_TEST: { rrule: 'FREQ=WEEKLY', times: [] },
 };
 const SOURCE_TABLES: Record<string, { table: string; pk: string }> = {
   vaccination: { table: 'health.vaccination', pk: 'vaccination_id' }, treatment: { table: 'health.treatment', pk: 'treatment_id' },

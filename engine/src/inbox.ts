@@ -209,6 +209,10 @@ export function chooseReader(aiGoAhead: boolean, deps: Pick<InboxDeps, 'reader' 
   return aiGoAhead ? deps.reader : deps.local;
 }
 
+/** What a vet writes for the species, folded to the names we hold: "Canine" is a dog, "Guinea-pig" is a guinea pig. */
+const VET_WORDS: [RegExp, string][] = [[/\bcanine\b/g, 'dog'], [/\bfeline\b/g, 'cat'], [/\bbudgie(s)?\b/g, 'budgerigar'], [/\bterrapin\b/g, 'turtle or terrapin'], [/\blapine\b/g, 'rabbit'], [/\bequine\b/g, 'horse']];
+export const normaliseSpecies = (v: string): string => VET_WORDS.reduce((t, [re, to]) => t.replace(re, to), v.toLowerCase().trim().replace(/[-_]+/g, ' '));
+
 /** Microchip first (the strongest key), then name + species. Ambiguous or nothing -> null: it asks, never guesses. */
 export async function matchAnimal(c: Client, a: { name: string | null; species: string | null; microchip: string | null }): Promise<number | null> {
   if (a.microchip) {
@@ -216,12 +220,12 @@ export async function matchAnimal(c: Client, a: { name: string | null; species: 
     if (r.rows.length === 1) return toId(r.rows[0]!.id);
   }
   if (a.name) {
-    const r = await c.query<{ id: string; species: string; label: string | null }>(
-      "SELECT a.animal_id::text AS id, lower(s.common_name) AS species, lower(a.ext->>'species_name') AS label FROM animal.animal a JOIN ref.species s ON s.species_id = a.species_id WHERE lower(a.name) = lower($1)", [a.name]);
-    const sp = a.species?.toLowerCase().trim();
+    const r = await c.query<{ id: string; species: string; label: string | null; latin: string | null }>(
+      "SELECT a.animal_id::text AS id, lower(s.common_name) AS species, lower(a.ext->>'species_name') AS label, lower(s.scientific_name) AS latin FROM animal.animal a JOIN ref.species s ON s.species_id = a.species_id WHERE lower(a.name) = lower($1)", [a.name]);
+    const sp = a.species ? normaliseSpecies(a.species) : undefined;
     // A document says "Rabbit" or "tarantula", so match the species' own name, or what the person typed for "Other animal".
     const words = (needle: string | null): boolean => !!needle && new RegExp(`(^|[^a-z])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?($|[^a-z])`).test(sp!);
-    const hits = sp ? r.rows.filter((x) => words(x.species) || words(x.label)) : r.rows;
+    const hits = sp ? r.rows.filter((x) => words(x.species) || words(x.label) || words(x.latin)) : r.rows;
     if (hits.length === 1) return toId(hits[0]!.id);
   }
   return null;

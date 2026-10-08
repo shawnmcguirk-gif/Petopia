@@ -7,7 +7,7 @@ const file = (code: string) => readFileSync(new URL(`../schemas/species/${code}.
 const mod = (code: string): SpeciesModule => ({ code, schema: JSON.parse(file(code)) as Record<string, unknown>, schema_version: 1 });
 const dog = mod('dog');
 const cat = mod('cat');
-const NEW = ['small_mammal', 'cage_bird', 'poultry', 'reptile', 'amphibian', 'aquarium_fish', 'equine', 'other'];
+const NEW = ['small_mammal', 'rabbit', 'cage_bird', 'poultry', 'reptile', 'amphibian', 'aquarium_fish', 'equine', 'other'];
 
 describe('species modules', () => {
   it('accepts valid dog and cat extensions, and an empty one', () => {
@@ -30,6 +30,8 @@ describe('species modules', () => {
     const sql = (n: string) => readFileSync(new URL(`../../migrations/${n}`, import.meta.url), 'utf8');
     const where: Record<string, string> = { dog: '004_ref.sql', cat: '004_ref.sql' };
     for (const code of NEW) where[code] = '015_any_animal.sql';
+    where.rabbit = '016_any_animal_fixes.sql'; // added by the review fixes
+    where.equine = '016_any_animal_fixes.sql'; // 015 holds version 1; 016 replaces it with version 2 (height_cm)
     for (const [code, mig] of Object.entries(where)) {
       const m = new RegExp(`\\$${code}\\$([\\s\\S]*?)\\$${code}\\$`).exec(sql(mig));
       expect(m?.[1], code).toBe(file(code).trim());
@@ -43,13 +45,16 @@ describe('species modules', () => {
   });
   it('the new modules take their own fields and bound them', () => {
     expect(extProblems(mod('small_mammal'), { housing: 'BOTH' })).toEqual([]);
+    expect(extProblems(mod('rabbit'), { housing: 'INDOOR', registry_reg: 'R-1' })).toEqual([]);
     expect(extProblems(mod('cage_bird'), { ring_number: 'IE-123', wings_clipped: false })).toEqual([]);
     expect(extProblems(mod('reptile'), { basking_temp_target_c: 38, uvb_lamp_changed_on: '2026-09-01' })).toEqual([]);
     expect(extProblems(mod('reptile'), { uvb_lamp_changed_on: 'last month' }).length).toBeGreaterThan(0);
     expect(extProblems(mod('aquarium_fish'), { water_type: 'FRESH', group_size: 6 })).toEqual([]);
     expect(extProblems(mod('aquarium_fish'), { water_type: 'LAKE' })[0]).toBe('water_type must be one of FRESH, MARINE, BRACKISH');
-    expect(extProblems(mod('equine'), { height_hands: 15.2 })).toEqual([]);
-    expect(extProblems(mod('equine'), { height_hands: 99 })[0]).toMatch(/height_hands must be <= 30/);
+    expect(extProblems(mod('equine'), { height_cm: 157 })).toEqual([]);
+    expect(extProblems(mod('equine'), { height_cm: 15.2 }).length).toBeGreaterThan(0);
+    expect(extProblems(mod('equine'), { height_cm: 999 })[0]).toMatch(/height_cm must be <= 220/);
+    expect(extProblems(mod('equine'), { height_hands: 15 })[0]).toBe('height_hands is not a equine field');
     expect(extProblems(mod('other'), { species_name: 'Tarantula' })).toEqual([]);
     expect(extProblems(mod('other'), { species_name: '' }).length).toBeGreaterThan(0);
   });

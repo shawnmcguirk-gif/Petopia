@@ -111,12 +111,14 @@ async function resolveSpecies(c: Client, input: unknown): Promise<Resolved> {
     .select(['m.code', 'm.schema', 'm.schema_version', 's.species_id', 's.common_name'])
     .where('s.domain', 'in', ['PET', 'BOTH']);
   let r;
-  if (typeof input === 'number') r = await q.where('s.species_id', '=', String(input)).executeTakeFirst();
-  else {
-    const t = input.trim().toLowerCase();
+  const asId = typeof input === 'number' ? input : /^\d+$/.test(input.trim()) ? Number(input.trim()) : null;
+  if (asId !== null) {
+    if (!Number.isSafeInteger(asId) || asId < 1) throw bad('species must be a species id or a name');
+    r = await q.where('s.species_id', '=', String(asId)).executeTakeFirst();
+  } else {
+    const t = (input as string).trim().toLowerCase(); // 'dog' and 'cat', the old spellings, are species names too
     if (!t) throw bad('species is required');
     r = await q.where(sql`lower(s.common_name)`, '=', t).executeTakeFirst();
-    if (!r && (t === 'dog' || t === 'cat')) r = await q.where('m.code', '=', t).executeTakeFirst(); // the old module-code spelling
   }
   if (!r) throw bad('Petopia does not know that kind of animal -- pick "Other animal" and type what it is');
   return { code: r.code, schema: r.schema, schema_version: r.schema_version, species_id: Number(r.species_id), common_name: r.common_name };
@@ -136,15 +138,22 @@ export async function listSpecies(c: Client): Promise<{ id: number; name: string
     .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || (a.group === 'OTHER' ? 0 : a.name.localeCompare(b.name)));
 }
 
-/** "Other animal" must say what it is, on creation and on every later edit of its details. Returns the ext to store. */
-function withKind(ext: Record<string, unknown>): Record<string, unknown> {
+/** The generic "Other animal" species carries the person's own words for what it is. */
+export const OTHER_SPECIES = 'Other animal';
+
+/**
+ * The rule for `species_name`: "Other animal" must say what it is (on creation and on every later edit of its details),
+ * and no other species may carry one -- it would sit unseen while still steering document matching.
+ */
+function checkKind(speciesName: string, ext: Record<string, unknown>): Record<string, unknown> {
+  if (speciesName !== OTHER_SPECIES) {
+    if ('species_name' in ext) throw bad('species_name is only for "Other animal"');
+    return ext;
+  }
   const kind = typeof ext.species_name === 'string' ? ext.species_name.trim() : '';
   if (!kind) throw bad('say what kind of animal it is (for example "Tarantula")');
   return { ...ext, species_name: kind };
 }
-
-/** The generic "Other animal" species carries the person's own words for what it is. */
-export const OTHER_SPECIES = 'Other animal';
 
 function baseQuery(c: Client) {
   return kdb(c)
@@ -224,9 +233,17 @@ export interface NewAnimal {
 export async function createAnimal(c: Client, ws: number, member: string, b: NewAnimal, today = todayIso()): Promise<AnimalView> {
   const name = str(b.name, 'name', 80);
   if (!name) throw bad('name is required');
-  const mod = await resolveSpecies(c, b.species);
-  const checked = assertExt(mod, b.ext ?? {});
-  const ext = mod.common_name === OTHER_SPECIES ? withKind(checked) : checked;
+  let mod = await resolveSpecies(c, b.species);
+  let given = b.ext ?? {};
+  if (mod.common_name === OTHER_SPECIES) {
+    // Someone who types a kind we already know ("Rabbit") gets that species, with its own fields, routines and limits.
+    const typed = (given as { species_name?: unknown }).species_name;
+    if (typeof typed === 'string' && typed.trim()) {
+      const known = await resolveSpecies(c, typed).catch(() => null);
+      if (known && known.common_name !== OTHER_SPECIES) { mod = known; given = {}; }
+    }
+  }
+  const ext = checkKind(mod.common_name, assertExt(mod, given));
   const born = vague(b.born, 'born');
   const acquired = vague(b.acquired, 'acquired');
   const home = await kdb(c).selectFrom('core.habitat').select('habitat_id').where('kind', '=', 'HOME').where('retired_at', 'is', null).orderBy('habitat_id').executeTakeFirst();
@@ -288,7 +305,7 @@ export async function updateAnimal(c: Client, id: number, member: string, b: Rec
     const mod = await loadModule(c, cur.module_code);
     const checked = assertExt(mod, b.ext);
     const sp = await kdb(c).selectFrom('animal.animal as a').innerJoin('ref.species as s', 's.species_id', 'a.species_id').select('s.common_name').where('a.animal_id', '=', String(id)).executeTakeFirstOrThrow();
-    set.ext = JSON.stringify(sp.common_name === OTHER_SPECIES ? withKind(checked) : checked);
+    set.ext = JSON.stringify(checkKind(sp.common_name, checked));
     set.ext_schema_version = mod.schema_version;
   }
   if (Object.keys(set).length) {

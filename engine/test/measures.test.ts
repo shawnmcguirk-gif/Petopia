@@ -37,6 +37,29 @@ describe('normalise', () => {
   });
 });
 
+describe('plausibility for the other kinds of animal (any-animal review, 2026-10-08)', () => {
+  const ask = (module: string, value: number, unit: string) => plausibility(normalise('weight', value, unit), null, module);
+  it('a hamster typed as 35 (kg) is questioned, 35 g is fine; the question names the kind in words', () => {
+    const slip = ask('small_mammal', 35, 'kg');
+    expect(slip.ok).toBe(false);
+    if (!slip.ok) { expect(slip.question).toContain('looks unusual for a small animal'); expect(slip.suggestion).toEqual({ value: '35', unit: 'g' }); }
+    expect(ask('small_mammal', 35, 'g').ok).toBe(true);
+  });
+  it('a horse of 2000 kg is questioned ("a horse", never the code), 500 kg is fine, a goldfish of 20 kg is questioned', () => {
+    const big = ask('equine', 2000, 'kg');
+    expect(!big.ok && big.question).toMatch(/looks unusual for a horse\./);
+    expect(ask('equine', 500, 'kg').ok).toBe(true);
+    expect(ask('aquarium_fish', 20, 'kg').ok).toBe(false);
+    expect(ask('aquarium_fish', 40, 'g').ok).toBe(true);
+  });
+  it('a kind with no bounds of its own uses the wide default and says "this animal"', () => {
+    expect(ask('other', 3000, 'kg').ok).toBe(false);
+    const q = ask('other', 3000, 'kg');
+    expect(!q.ok && q.question).toContain('looks unusual for this animal');
+    expect(ask('other', 12, 'kg').ok).toBe(true);
+  });
+});
+
 describe('plausibility (S3 acceptance: 61 for a 6.1 kg dog asks "did you mean 6.1?")', () => {
   it('61 kg after 6.1 kg -> a question suggesting 6.1 kg; nothing is decided for the person', () => {
     const p = plausibility(normalise('weight', 61, 'kg'), prev('6.1'), 'dog');

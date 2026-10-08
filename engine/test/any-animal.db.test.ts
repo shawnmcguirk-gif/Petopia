@@ -1,5 +1,6 @@
 // Any kind of animal (Ryan, 2026-10-08; migration 015). Runs only against petopia_test, like db.test.ts.
 // Fixtures are fictional: a rabbit "Clover", a tarantula "Hairy", a goldfish "Bubbles".
+import { readdirSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const URL_ = process.env.PETOPIA_TEST_DATABASE_URL;
@@ -7,6 +8,7 @@ if (URL_) process.env.PETOPIA_DATABASE_URL = URL_;
 
 const { createAnimal, getAnimal, listSpecies, updateAnimal } = await import('../src/animals.js');
 const { matchAnimal } = await import('../src/inbox.js');
+const { careOf } = await import('../src/care.js');
 const { closePool, withTxn } = await import('../src/db.js');
 
 const run = `a${Date.now().toString(36)}`;
@@ -50,9 +52,31 @@ describe.skipIf(!URL_)('any kind of animal (015)', () => {
     await expect(add({ name: 'Freddie', species: 'Red fox' })).rejects.toMatchObject({ status: 400 });
   });
 
+  it('the DATABASE holds exactly the schema files (a fix that only edits an already-run migration would not)', async () => {
+    const rows = await withTxn(W, true, (c) => c.query<{ code: string; schema: unknown }>('SELECT code, schema FROM ref.species_module'));
+    const db = new Map(rows.rows.map((r) => [r.code, r.schema]));
+    const files = readdirSync(new URL('../schemas/species/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    expect(files.length).toBeGreaterThanOrEqual(11);
+    for (const code of files) expect(db.get(code), code).toEqual(JSON.parse(readFileSync(new URL(`../schemas/species/${code}.json`, import.meta.url), 'utf8')));
+    expect([...db.keys()].sort()).toEqual([...files].sort()); // no module without a reviewed file, no file without a module
+  });
+
+  it('suggests sensible care per module: a rabbit gets vaccination, a horse no daily teeth, nothing gets a bare "Care"', async () => {
+    const kinds = async (species: string, ext: Record<string, unknown> = {}) => {
+      const a = await add({ name: `S-${species}`, species, ext });
+      return (await withTxn(W, true, (c) => careOf(c, a.id, me, T))).suggestions.map((s) => s.kind);
+    };
+    const rabbit = await kinds('Rabbit');
+    expect(rabbit).toContain('VACCINATION');
+    expect(rabbit).not.toContain('TEETH');
+    expect(await kinds('Horse')).not.toContain('TEETH');
+    expect(await kinds('Other animal', { species_name: 'Tarantula' })).toEqual(['FEED', 'GROOM', 'CAGE_CLEAN', 'BEDDING']);
+    for (const sp of ['Goldfish', 'Hamster', 'Budgerigar', 'Chicken', 'Bearded dragon', 'Axolotl', 'Horse']) expect(await kinds(sp), sp).not.toContain('OTHER');
+  });
+
   it('adds a rabbit by name (any case), by id, and keeps "dog" / "cat" working', async () => {
     const rabbit = await add({ name: 'Clover', species: 'rabbit', born: '2023', ext: { housing: 'BOTH' } });
-    expect(rabbit).toMatchObject({ species: 'Rabbit', module: 'small_mammal', my_role: 'OWNER', ext: { housing: 'BOTH' } });
+    expect(rabbit).toMatchObject({ species: 'Rabbit', module: 'rabbit', my_role: 'OWNER', ext: { housing: 'BOTH' } });
     const id = (await withTxn(W, true, (c) => listSpecies(c))).find((s) => s.name === 'Goldfish')!.id;
     expect(await add({ name: 'Bubbles', species: id, ext: { water_type: 'FRESH', group_size: 1 } })).toMatchObject({ species: 'Goldfish', module: 'aquarium_fish' });
     expect(await add({ name: 'Rex', species: 'dog' })).toMatchObject({ species: 'Dog', module: 'dog' });
@@ -64,6 +88,10 @@ describe.skipIf(!URL_)('any kind of animal (015)', () => {
     await expect(add({ name: 'Sparkle', species: '' })).rejects.toMatchObject({ status: 400 });
     await expect(add({ name: 'Sparkle', species: 99999999 })).rejects.toMatchObject({ status: 400 });
     await expect(add({ name: 'Clover2', species: 'Rabbit', ext: { walk_minutes_target: 30 } })).rejects.toMatchObject({ status: 422 });
+    await expect(add({ name: 'Sparkle', species: 3.5 })).rejects.toMatchObject({ status: 400 });
+    await expect(add({ name: 'Heidi3', species: 'Goat', ext: { species_name: 'Tarantula' } })).rejects.toMatchObject({ status: 400 }); // only "Other animal" carries a typed name
+    const id = String((await withTxn(W, true, (c) => listSpecies(c))).find((x) => x.name === 'Rabbit')!.id);
+    expect(await add({ name: 'ById', species: id })).toMatchObject({ species: 'Rabbit', module: 'rabbit' }); // an id may arrive as a digit string
   });
 
   it('"Other animal" needs what the person calls it, shows that, and stores it on the animal only', async () => {
@@ -73,6 +101,8 @@ describe.skipIf(!URL_)('any kind of animal (015)', () => {
     expect(t).toMatchObject({ species: 'Tarantula', module: 'other', ext: { species_name: 'Tarantula' } });
     const shared = await withTxn(W, true, (c) => c.query("SELECT count(*)::int AS n FROM ref.species WHERE lower(common_name) = 'tarantula'"));
     expect((shared.rows[0] as { n: number }).n).toBe(0); // nothing a household types reaches the shared species table
+    const typed = await add({ name: 'Typed', species: 'Other animal', ext: { species_name: 'rabbit' } }); // a kind we know gets its own module
+    expect(typed).toMatchObject({ species: 'Rabbit', module: 'rabbit', ext: {} });
     const g = await add({ name: 'Heidi', species: 'Goat' }); // a species with its own row on the same module needs no typing
     expect(g).toMatchObject({ species: 'Goat', module: 'other' });
   });
@@ -103,6 +133,9 @@ describe.skipIf(!URL_)('any kind of animal (015)', () => {
     expect(await m('Biscuit', 'Domestic rabbit')).toBe(bun.id);
     expect(await m('Biscuit', 'cats')).toBe(cat.id);
     expect(await m('Biscuit', 'Tarantula (Chilean rose)')).toBe(spider.id);
+    expect(await m('Biscuit', 'Feline')).toBe(cat.id); // what a vet writes
+    expect(await m('Biscuit', 'Oryctolagus cuniculus')).toBe(bun.id);
+    expect(await m('Biscuit', 'Lapine')).toBe(bun.id);
     expect(await m('Biscuit', null)).toBeNull(); // three of that name and no species: it asks, never guesses
     expect(await m('Biscuit', 'hamster')).toBeNull();
   });

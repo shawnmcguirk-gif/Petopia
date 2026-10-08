@@ -163,7 +163,7 @@ every species. New species = new module row + schema file. No migration, no core
 
 Age is never stored: it is computed from `born_on` and shown with its precision ("about 8 years").
 
-`ref.species_module` — the extension registry (v1 ships `dog` and `cat`; others in v2.1)
+`ref.species_module` — the extension registry (v1 ships `dog` and `cat`; **amended 2026-10-08: the other modules below ship in v1 too, see sec 3.3.1**)
 
 | Field | Notes |
 |---|---|
@@ -182,6 +182,17 @@ Example `ext` per module **[R §24]**:
 | cage_bird | `enclosure_habitat_id`, `wings_clipped`, `ring_number` |
 | equine | `stable_habitat_id`, `passport_number`, `farrier_contact_id`, `height_hands` |
 | reptile | `enclosure_habitat_id`, `basking_temp_target_c`, `uvb_lamp_changed_on` |
+
+### 3.3.1 Amendment 2026-10-08 — any kind of animal ships in v1 (Ryan: "the app needs to support any type of animal not just cats and dogs")
+
+Pulls the v2.1 species modules forward. Built as migrations 015 + 016; reviewed in `docs/reviews/2026-10-08-any-animal-review.md`.
+
+- **Many species, one module.** `ref.species.module_code` names the module an animal of that species uses (rabbit and hamster differ; goldfish and tiger barb share). `ref.species_module.species_id` is legacy (dog, cat only). Species names are unique ignoring case.
+- **Modules shipped:** `dog`, `cat`, `rabbit`, `small_mammal` (hamster, guinea pig, gerbil, rat, mouse, chinchilla, ferret, hedgehog, degu), `cage_bird`, `poultry` (chicken, duck, goose), `reptile`, `amphibian` (axolotl, frog), `aquarium_fish` (goldfish, betta, koi, bala shark, angelfish, tiger barb, torpedo barb, tropical fish), `equine` (horse, pony, donkey), `other`.
+- **`other` and "Other animal".** Goat, sheep and pig sit on `other`. The species "Other animal" is the type-it-yourself fallback: the person's words go in that animal's own `ext.species_name` (required, trimmed; refused on any other species). Nothing a household types is written to `ref.*`. Typing a kind we already hold ("Rabbit") is resolved to that species and its module.
+- **Ext deviations from the sec 3.3 examples:** habitat links (`tank_habitat_id`, `enclosure_habitat_id`, `stable_habitat_id`) and `farrier_contact_id` are NOT in v1 schemas (an ext cannot hold a foreign key the DB checks; habitats for tanks/enclosures arrive with water tests in v2.1). Equine uses `height_cm`, not `height_hands` (15.2 hh is 15 hands 2 inches, so a decimal misleads).
+- **Suggested care is per module** (never auto-created): e.g. rabbit gets feed, groom, nails, vaccination (Myxomatosis, RHD1, RHD2), cage, bedding; a horse gets feed, groom, worming, vaccination; "Other animal" gets feed, groom, cage, bedding. `measures` and `vaccine_set` are informational today (nothing reads them yet). Weight typing-slip bounds are per module in `measures.ts`.
+- **Wildlife is still v2.** The garden species Ryan listed (robin, collared dove, blackbird, house/tree sparrow, starling, feral and wood pigeon, blue/great/coal/long-tailed tit, bullfinch, song/mistle thrush, redwing, sparrowhawk, red fox, grey/red squirrel, common frog) are seeded in `ref.species` with `domain = 'WILD'`, no module, and are not offered in Add animal. Red squirrel is `sensitive`.
 
 ### 3.4 Habitat (first-class) [R §25]
 

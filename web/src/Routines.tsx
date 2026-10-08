@@ -46,7 +46,7 @@ export function CareSection({ a, onChanged }: { a: Animal; onChanged: () => void
           )}
           {manage && v.suggestions.length > 0 && (
             <div className="mt-4">
-              <p className="m-0 mb-2 text-[14px] text-ink-2">Suggested for a {a.species.toLowerCase()} — a starting schedule, change it any time:</p>
+              <p className="m-0 mb-2 text-[14px] text-ink-2">Suggested for {a.name} — a starting schedule, change it any time:</p>
               <div className="flex flex-wrap gap-2">
                 {v.suggestions.map((s) => (
                   <button key={s.kind} type="button" className="btn min-h-10 px-3 text-[14px]" onClick={() => void add({ kind: s.kind, rrule: s.rrule, times: s.times, origin: 'SPECIES_DEFAULT' })}>
