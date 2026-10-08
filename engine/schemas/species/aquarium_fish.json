@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/species/aquarium_fish/1",
+  "title": "Fish extension (Petopia D1 sec 3.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "water_type": { "type": "string", "enum": ["FRESH", "MARINE", "BRACKISH"] },
+    "group_size": { "type": "integer", "minimum": 1, "maximum": 10000 }
+  }
+}

@@ -20,6 +20,14 @@ full grammar and vocabulary.
 |---|---|---|---|
 | D1 Petopia core | [Built 2026-10-07T14:22:24Z] stage-render (D51) | install | **2026-10-07 15:40 IST (Cloud/Opus 5.5):** all v1 slices S1-S7 + every review fix deployed (main 61e5b21 after the wrap batch); fresh independent review READY WITH NOTES. Waiting on Ryan: try it on his phone, then say `ready`/`verified`. See the top entry below. |
 
+## 2026-10-08 -- "support any type of animal" (Cloud/Sonnet 5.5, Ryan's session)
+
+Ryan, 2026-10-08: "the app needs to support any type of animal not just cats and dogs". Pulls spec sec 3.3's v2.1 species modules into D1. Model already allows it (one `animal` table, species = `ref.species` row + `ref.species_module` JSON schema; routine kinds already cover tank/cage/feeder). Gaps: only dog+cat seeded; `moduleOf` (animals.ts) resolves species via module code with `species_id` on the module row, i.e. one species per module; AnimalForm hard-codes two buttons.
+
+**Design (assumptions, flagged to Ryan):** migration 015 adds `ref.species.module_code` (many species -> one module), seeds ~30 pet species under modules small_mammal, cage_bird, reptile, aquarium_fish, equine, poultry, plus generic `other` (ext.species_name required, per-animal, so no household text lands in shared ref data). `GET /api/species` feeds the picker. create accepts a species id/name or the old `dog`/`cat` codes.
+
+**RESUME HERE:** build per the above, in this order: 015 + schemas + tests, engine moduleOf + route, web picker, deploy via runner, independent review. Progress is logged below as it lands.
+
 ## 2026-10-07 18:30 IST -- tile bug fixed (Cowork/Sonnet 5.5, Ryan's session)
 
 Ryan: tapping Petopia showed the lock screen, then home. Cause: Synapse's PWA service worker served Synapse's own app shell inside the /petopia/ iframe (nested Synapse = cold-open lock screen, then home). `/petopia/` was missing from `navigateFallbackDenylist` in `Synapse/serenity/vite.config.ts` (Vitalis and Epicure had it). Fixed in Synapse `7127ce5` (pushed), built from a clean export of HEAD (another session has uncommitted D44 review-fix edits in the Synapse tree; NOT shipped) and live. Ryan must fully close and reopen Synapse once so the new service worker takes over. Not yet confirmed by Ryan on his phone.

@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/species/equine/1",
+  "title": "Horse extension (Petopia D1 sec 3.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "passport_number": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "height_hands": { "type": "number", "minimum": 1, "maximum": 30 }
+  }
+}

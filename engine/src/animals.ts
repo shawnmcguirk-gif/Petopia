@@ -89,17 +89,55 @@ const vague = (v: unknown, field: string): { on: string | null; precision: Preci
   return p;
 };
 
-async function moduleOf(c: Client, code: unknown): Promise<SpeciesModule & { species_id: number; common_name: string }> {
-  if (typeof code !== 'string') throw bad('species is required (dog or cat)');
-  const r = await kdb(c)
-    .selectFrom('ref.species_module as m')
-    .innerJoin('ref.species as s', 's.species_id', 'm.species_id')
-    .select(['m.code', 'm.schema', 'm.schema_version', 'm.species_id', 's.common_name'])
-    .where('m.code', '=', code.toLowerCase())
-    .executeTakeFirst();
-  if (!r || r.species_id === null) throw bad(`Petopia does not have a ${code} module yet`);
+type Resolved = SpeciesModule & { species_id: number; common_name: string };
+
+/** The module itself, by code. Used when an existing animal's `ext` is edited (the species is already fixed). */
+async function loadModule(c: Client, code: string): Promise<SpeciesModule> {
+  const r = await kdb(c).selectFrom('ref.species_module').select(['code', 'schema', 'schema_version']).where('code', '=', code).executeTakeFirst();
+  if (!r) throw bad(`Petopia does not have a ${code} module yet`);
+  return { code: r.code, schema: r.schema, schema_version: r.schema_version };
+}
+
+/**
+ * Which species (and so which module) a new animal is. `species` is the species' id, its name ("Rabbit", case
+ * does not matter), or -- from before any-animal support -- the old module code "dog" / "cat". Only species that
+ * have a module are offered, so an unknown or module-less species is refused rather than guessed.
+ */
+async function resolveSpecies(c: Client, input: unknown): Promise<Resolved> {
+  if (typeof input !== 'string' && typeof input !== 'number') throw bad('species is required');
+  const q = kdb(c)
+    .selectFrom('ref.species as s')
+    .innerJoin('ref.species_module as m', 'm.code', 's.module_code')
+    .select(['m.code', 'm.schema', 'm.schema_version', 's.species_id', 's.common_name'])
+    .where('s.domain', 'in', ['PET', 'BOTH']);
+  let r;
+  if (typeof input === 'number') r = await q.where('s.species_id', '=', String(input)).executeTakeFirst();
+  else {
+    const t = input.trim().toLowerCase();
+    if (!t) throw bad('species is required');
+    r = await q.where(sql`lower(s.common_name)`, '=', t).executeTakeFirst();
+    if (!r && (t === 'dog' || t === 'cat')) r = await q.where('m.code', '=', t).executeTakeFirst(); // the old module-code spelling
+  }
+  if (!r) throw bad('Petopia does not know that kind of animal -- pick "Other animal" and type what it is');
   return { code: r.code, schema: r.schema, schema_version: r.schema_version, species_id: Number(r.species_id), common_name: r.common_name };
 }
+
+/** What the "Add animal" picker offers: every pet species that has a module, in a stable, grouped order. */
+export async function listSpecies(c: Client): Promise<{ id: number; name: string; group: string; module: string }[]> {
+  const rows = await kdb(c)
+    .selectFrom('ref.species as s')
+    .select(['s.species_id', 's.common_name', 's.group', 's.module_code'])
+    .where('s.domain', 'in', ['PET', 'BOTH'])
+    .where('s.module_code', 'is not', null)
+    .execute();
+  const order = ['DOG', 'CAT', 'MAMMAL', 'BIRD', 'REPTILE', 'AMPHIBIAN', 'FISH', 'INSECT', 'OTHER'];
+  return rows
+    .map((r) => ({ id: Number(r.species_id), name: r.common_name, group: r.group, module: r.module_code! }))
+    .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || (a.group === 'OTHER' ? 0 : a.name.localeCompare(b.name)));
+}
+
+/** The generic "Other animal" species carries the person's own words for what it is. */
+export const OTHER_SPECIES = 'Other animal';
 
 function baseQuery(c: Client) {
   return kdb(c)
@@ -123,12 +161,18 @@ async function extras(c: Client): Promise<Extras> {
   return { weights: await latestWeights(c), foods: await currentFoods(c), meds: await currentByAnimal(c) };
 }
 
+/** "Other animal" shows what the person typed ("Tarantula"); every other species shows its own name. */
+function speciesLabel(r: Row): string {
+  const n = r.species === OTHER_SPECIES ? (r.ext as { species_name?: unknown } | null)?.species_name : null;
+  return typeof n === 'string' && n.trim() ? n.trim() : r.species;
+}
+
 function view(r: Row, role: Role, today: string, x: Extras): AnimalView {
   const id = Number(r.animal_id);
   const bp = r.born_precision as Precision;
   const ap = r.acquired_precision as Precision;
   return {
-    id, name: r.name, nickname: r.nickname, species: r.species, module: r.module_code, breed: r.breed,
+    id, name: r.name, nickname: r.nickname, species: speciesLabel(r), module: r.module_code, breed: r.breed,
     sex: r.sex, neuter_status: r.neuter_status, colour_markings: r.colour_markings,
     born: formatVagueDate(r.born_on, bp), born_precision: bp, age: ageOf(r.born_on, bp, today),
     acquired: formatVagueDate(r.acquired_on, ap), acquired_precision: ap,
@@ -173,8 +217,13 @@ export interface NewAnimal {
 export async function createAnimal(c: Client, ws: number, member: string, b: NewAnimal, today = todayIso()): Promise<AnimalView> {
   const name = str(b.name, 'name', 80);
   if (!name) throw bad('name is required');
-  const mod = await moduleOf(c, b.species);
+  const mod = await resolveSpecies(c, b.species);
   const ext = assertExt(mod, b.ext ?? {});
+  if (mod.common_name === OTHER_SPECIES) {
+    const kind = typeof ext.species_name === 'string' ? ext.species_name.trim() : '';
+    if (!kind) throw bad('say what kind of animal it is (for example "Tarantula")');
+    ext.species_name = kind;
+  }
   const born = vague(b.born, 'born');
   const acquired = vague(b.acquired, 'acquired');
   const home = await kdb(c).selectFrom('core.habitat').select('habitat_id').where('kind', '=', 'HOME').where('retired_at', 'is', null).orderBy('habitat_id').executeTakeFirst();
@@ -233,7 +282,7 @@ export async function updateAnimal(c: Client, id: number, member: string, b: Rec
     set.status_on = st === 'ACTIVE' ? null : vague(b.status_on ?? today, 'status_on').on;
   }
   if ('ext' in b) {
-    const mod = await moduleOf(c, cur.module_code);
+    const mod = await loadModule(c, cur.module_code);
     set.ext = JSON.stringify(assertExt(mod, b.ext));
     set.ext_schema_version = mod.schema_version;
   }

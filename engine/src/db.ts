@@ -89,7 +89,7 @@ export interface AnimalTable {
   created_by: string;
   updated_at: ColumnType<Date, never, string>;
 }
-export interface SpeciesTable { species_id: Serial; common_name: string; scientific_name: string | null; group: string; domain: string; sensitive: boolean }
+export interface SpeciesTable { species_id: Serial; common_name: string; scientific_name: string | null; group: string; domain: string; sensitive: boolean; module_code: string | null }
 export interface SpeciesModuleTable { code: string; species_id: string | null; schema: Record<string, unknown>; schema_version: number; measures: string[]; default_routines: unknown; vaccine_set: string[] }
 export interface MediaItemTable { media_item_id: Serial; workspace_id: BigId; sha256: string; path: string; width: number; height: number; taken_on: string | null; added_by: string; retired_at: ColumnType<Date | null, never, null>; created_at: Created }
 export interface HabitatTable { habitat_id: Serial; workspace_id: BigId; name: string; kind: string; parent_id: BigIdNull; ext: unknown; retired_at: Date | null; created_at: Created; created_by: string }

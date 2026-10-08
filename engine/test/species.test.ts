@@ -7,6 +7,7 @@ const file = (code: string) => readFileSync(new URL(`../schemas/species/${code}.
 const mod = (code: string): SpeciesModule => ({ code, schema: JSON.parse(file(code)) as Record<string, unknown>, schema_version: 1 });
 const dog = mod('dog');
 const cat = mod('cat');
+const NEW = ['small_mammal', 'cage_bird', 'poultry', 'reptile', 'amphibian', 'aquarium_fish', 'equine', 'other'];
 
 describe('species modules', () => {
   it('accepts valid dog and cat extensions, and an empty one', () => {
@@ -25,11 +26,31 @@ describe('species modules', () => {
     expect(() => assertExt(cat, { indoor_outdoor: 'X', wings_clipped: true })).toThrow(expect.objectContaining({ status: 422 }) as Error);
     expect(assertExt(cat, { indoor_outdoor: 'BOTH' })).toEqual({ indoor_outdoor: 'BOTH' });
   });
-  it('migration 004 carries byte-identical copies of the schema files (no drift)', () => {
-    const sql = readFileSync(new URL('../../migrations/004_ref.sql', import.meta.url), 'utf8');
-    for (const code of ['dog', 'cat']) {
-      const m = new RegExp(`\\$${code}\\$([\\s\\S]*?)\\$${code}\\$`).exec(sql);
-      expect(m?.[1]).toBe(file(code).trim());
+  it('migrations 004 and 015 carry byte-identical copies of the schema files (no drift)', () => {
+    const sql = (n: string) => readFileSync(new URL(`../../migrations/${n}`, import.meta.url), 'utf8');
+    const where: Record<string, string> = { dog: '004_ref.sql', cat: '004_ref.sql' };
+    for (const code of NEW) where[code] = '015_any_animal.sql';
+    for (const [code, mig] of Object.entries(where)) {
+      const m = new RegExp(`\\$${code}\\$([\\s\\S]*?)\\$${code}\\$`).exec(sql(mig));
+      expect(m?.[1], code).toBe(file(code).trim());
     }
+  });
+  it('every new module accepts an empty extension and refuses fields from elsewhere', () => {
+    for (const code of NEW) {
+      expect(extProblems(mod(code), {}), code).toEqual([]);
+      expect(extProblems(mod(code), { coat_type: 'LONG' })[0], code).toBe('coat_type is not a ' + code + ' field');
+    }
+  });
+  it('the new modules take their own fields and bound them', () => {
+    expect(extProblems(mod('small_mammal'), { housing: 'BOTH' })).toEqual([]);
+    expect(extProblems(mod('cage_bird'), { ring_number: 'IE-123', wings_clipped: false })).toEqual([]);
+    expect(extProblems(mod('reptile'), { basking_temp_target_c: 38, uvb_lamp_changed_on: '2026-09-01' })).toEqual([]);
+    expect(extProblems(mod('reptile'), { uvb_lamp_changed_on: 'last month' }).length).toBeGreaterThan(0);
+    expect(extProblems(mod('aquarium_fish'), { water_type: 'FRESH', group_size: 6 })).toEqual([]);
+    expect(extProblems(mod('aquarium_fish'), { water_type: 'LAKE' })[0]).toBe('water_type must be one of FRESH, MARINE, BRACKISH');
+    expect(extProblems(mod('equine'), { height_hands: 15.2 })).toEqual([]);
+    expect(extProblems(mod('equine'), { height_hands: 99 })[0]).toMatch(/height_hands must be <= 30/);
+    expect(extProblems(mod('other'), { species_name: 'Tarantula' })).toEqual([]);
+    expect(extProblems(mod('other'), { species_name: '' }).length).toBeGreaterThan(0);
   });
 });

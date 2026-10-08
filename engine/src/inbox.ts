@@ -216,10 +216,12 @@ export async function matchAnimal(c: Client, a: { name: string | null; species: 
     if (r.rows.length === 1) return toId(r.rows[0]!.id);
   }
   if (a.name) {
-    const r = await c.query<{ id: string; species: string; module_code: string }>(
-      'SELECT a.animal_id::text AS id, lower(s.common_name) AS species, a.module_code FROM animal.animal a JOIN ref.species s ON s.species_id = a.species_id WHERE lower(a.name) = lower($1)', [a.name]);
+    const r = await c.query<{ id: string; species: string; label: string | null }>(
+      "SELECT a.animal_id::text AS id, lower(s.common_name) AS species, lower(a.ext->>'species_name') AS label FROM animal.animal a JOIN ref.species s ON s.species_id = a.species_id WHERE lower(a.name) = lower($1)", [a.name]);
     const sp = a.species?.toLowerCase().trim();
-    const hits = sp ? r.rows.filter((x) => sp.includes(x.species) || sp.includes(x.module_code)) : r.rows;
+    // A document says "Rabbit" or "tarantula", so match the species' own name, or what the person typed for "Other animal".
+    const words = (needle: string | null): boolean => !!needle && new RegExp(`(^|[^a-z])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?($|[^a-z])`).test(sp!);
+    const hits = sp ? r.rows.filter((x) => words(x.species) || words(x.label)) : r.rows;
     if (hits.length === 1) return toId(hits[0]!.id);
   }
   return null;

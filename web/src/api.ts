@@ -75,7 +75,9 @@ export interface Animal {
   can: string[];
 }
 export interface Me { member: string; household: { id: number } | null; admin?: boolean }
-export type NewAnimal = { name: string; species: string; breed?: string; born?: string; sex?: string; neuter_status?: string; colour_markings?: string; microchip?: string };
+export interface SpeciesOption { id: number; name: string; group: string; module: string }
+export const OTHER_ANIMAL = 'Other animal';
+export type NewAnimal = { name: string; species: string; ext?: Record<string, unknown>; breed?: string; born?: string; sex?: string; neuter_status?: string; colour_markings?: string; microchip?: string };
 
 // ---- S3 / S4 shapes (engine/src/feeding.ts, measurements.ts, records.ts, medications.ts, timeline.ts) ----
 export interface ContactRef { id: number; name: string; phone: string | null }

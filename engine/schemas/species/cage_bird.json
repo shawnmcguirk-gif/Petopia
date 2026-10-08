@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/species/cage_bird/1",
+  "title": "Bird extension (Petopia D1 sec 3.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ring_number": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "wings_clipped": { "type": "boolean" }
+  }
+}

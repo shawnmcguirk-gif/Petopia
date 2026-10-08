@@ -2,7 +2,7 @@
 // The same form edits an existing animal's basic profile (Owner / Primary carer; the engine checks).
 import { Camera, ChevronDown } from 'lucide-react';
 import { useEffect, useId, useState, type FormEvent } from 'react';
-import { ApiError, patch, post, type Animal } from './api';
+import { ApiError, get, OTHER_ANIMAL, patch, post, type Animal, type SpeciesOption } from './api';
 import { photoForUpload } from './photo';
 import { go } from './route';
 
@@ -10,12 +10,19 @@ export let notice: string | null = null; // a message carried to the next screen
 export const peekNotice = (): string | null => notice;
 export const clearNotice = (): void => { notice = null; };
 
-const SPECIES = [{ code: 'dog', label: 'Dog' }, { code: 'cat', label: 'Cat' }] as const;
+// Dog and Cat are one tap; every other kind of animal is in the list below them, which the engine supplies (any animal
+// with a module). "Other animal" lets the person type what it is, so nothing is ever turned away.
+const COMMON = ['Dog', 'Cat'];
+const FALLBACK: SpeciesOption[] = [{ id: 0, name: 'Dog', group: 'DOG', module: 'dog' }, { id: 0, name: 'Cat', group: 'CAT', module: 'cat' }, { id: 0, name: OTHER_ANIMAL, group: 'OTHER', module: 'other' }];
+const GROUPS: [string, string][] = [['MAMMAL', 'Mammals'], ['BIRD', 'Birds'], ['REPTILE', 'Reptiles'], ['AMPHIBIAN', 'Amphibians'], ['FISH', 'Fish'], ['INSECT', 'Insects']];
+const breedHint = (species: string): string => (species === 'Cat' ? 'e.g. Domestic shorthair' : species === 'Dog' ? 'e.g. Shih Tzu' : 'Breed or variety');
 
 export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: (a: Animal) => void }) {
   const ids = useId();
   const [name, setName] = useState(existing?.name ?? '');
-  const [species, setSpecies] = useState(existing?.module ?? '');
+  const [species, setSpecies] = useState(''); // a species name; chosen only when adding (an animal's species is fixed)
+  const [otherName, setOtherName] = useState('');
+  const [options, setOptions] = useState<SpeciesOption[]>(FALLBACK);
   const [breed, setBreed] = useState(existing?.breed ?? '');
   const [born, setBorn] = useState(existing?.born ?? '');
   const [sex, setSex] = useState<string>(existing?.sex ?? 'UNKNOWN');
@@ -30,13 +37,21 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (existing) return;
+    let live = true;
+    get<SpeciesOption[]>('api/species').then((l) => { if (live && l.length) setOptions(l); }, () => undefined); // keep the short list if it cannot load
+    return () => { live = false; };
+  }, [existing]);
+
+  useEffect(() => {
     if (!file) { setPreview(null); return; }
     const u = URL.createObjectURL(file);
     setPreview(u);
     return () => URL.revokeObjectURL(u);
   }, [file]);
 
-  const canSave = name.trim().length > 0 && species !== '' && !busy;
+  const isOther = species === OTHER_ANIMAL;
+  const canSave = name.trim().length > 0 && (existing ? true : species !== '' && (!isOther || otherName.trim().length > 0)) && !busy;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -51,7 +66,7 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
         onSaved(await patch<Animal>(`api/animals/${existing.id}`, body));
         return;
       }
-      const a = await post<Animal>('api/animals', { name, species, ...details });
+      const a = await post<Animal>('api/animals', { name, species, ...(isOther ? { ext: { species_name: otherName.trim() } } : {}), ...details });
       if (file) {
         try {
           await post<Animal>(`api/animals/${a.id}/photo`, { dataBase64: await photoForUpload(file) });
@@ -80,15 +95,35 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
         <div>
           <span className={label} id={`${ids}-sp`}>Species</span>
           <div className="seg" role="group" aria-labelledby={`${ids}-sp`}>
-            {SPECIES.map((s) => <button key={s.code} type="button" aria-pressed={species === s.code} onClick={() => setSpecies(s.code)}>{s.label}</button>)}
+            {COMMON.map((n) => <button key={n} type="button" aria-pressed={species === n} onClick={() => setSpecies(n)}>{n}</button>)}
           </div>
+          {options.length > COMMON.length + 1 && (
+            <div className="mt-3">
+              <label htmlFor={`${ids}-more-sp`} className="mb-1.5 block text-[13px] text-ink-2">Or another kind of animal</label>
+              <select id={`${ids}-more-sp`} className="field" value={COMMON.includes(species) ? '' : species} onChange={(e) => setSpecies(e.target.value)}>
+                <option value="">Choose…</option>
+                {GROUPS.map(([g, title]) => {
+                  const here = options.filter((o) => o.group === g && !COMMON.includes(o.name));
+                  return here.length ? <optgroup key={g} label={title}>{here.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</optgroup> : null;
+                })}
+                <option value={OTHER_ANIMAL}>Something else — I'll type it</option>
+              </select>
+            </div>
+          )}
+          {options.length <= COMMON.length + 1 && <button type="button" className="btn mt-3" aria-pressed={isOther} onClick={() => setSpecies(OTHER_ANIMAL)}>Another kind of animal</button>}
+          {isOther && (
+            <div className="mt-3">
+              <label htmlFor={`${ids}-kind`} className="mb-1.5 block text-[13px] text-ink-2">What kind of animal is it?</label>
+              <input id={`${ids}-kind`} className="field" value={otherName} onChange={(e) => setOtherName(e.target.value)} maxLength={80} autoComplete="off" placeholder="e.g. Tarantula" required />
+            </div>
+          )}
         </div>
       )}
 
       <div className="grid gap-6 sm:grid-cols-2">
         <div>
           <label htmlFor={`${ids}-breed`} className={label}>Breed <span className="font-normal opacity-70">(optional)</span></label>
-          <input id={`${ids}-breed`} className="field" value={breed} onChange={(e) => setBreed(e.target.value)} maxLength={80} placeholder={species === 'cat' ? 'e.g. Domestic shorthair' : 'e.g. Shih Tzu'} />
+          <input id={`${ids}-breed`} className="field" value={breed} onChange={(e) => setBreed(e.target.value)} maxLength={80} placeholder={breedHint(species || existing?.species || '')} />
         </div>
         <div>
           <label htmlFor={`${ids}-born`} className={label}>Born <span className="font-normal opacity-70">(optional)</span></label>

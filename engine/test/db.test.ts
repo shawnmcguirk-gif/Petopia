@@ -73,7 +73,7 @@ describe.skipIf(!URL_)('database rules (S1)', () => {
 
   it('A6: ext is validated by ajv against the module (422), the microchip is unique per household', async () => {
     await expect(withTxn(A, false, (c) => createAnimal(c, A, who('alex'), { ...biscuit, ext: { walk_minutes_target: 30 } }, T))).rejects.toMatchObject({ status: 422 });
-    await expect(withTxn(A, false, (c) => createAnimal(c, A, who('alex'), { ...biscuit, species: 'parrot' }, T))).rejects.toMatchObject({ status: 400 });
+    await expect(withTxn(A, false, (c) => createAnimal(c, A, who('alex'), { ...biscuit, species: 'unicorn' }, T))).rejects.toMatchObject({ status: 400 });
     const chip = `98510${Date.now() % 1e10}`;
     await withTxn(A, false, (c) => createAnimal(c, A, who('alex'), { ...biscuit, microchip: chip }, T));
     await expect(withTxn(A, false, (c) => createAnimal(c, A, who('alex'), { ...biscuit, microchip: chip }, T))).rejects.toMatchObject({ code: '23505' });

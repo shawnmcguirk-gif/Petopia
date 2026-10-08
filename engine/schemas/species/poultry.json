@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/species/poultry/1",
+  "title": "Poultry extension (Petopia D1 sec 3.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "flock_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "ring_number": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}
