@@ -31,7 +31,7 @@ export const MEASURES: Record<MeasureCode, MeasureDef> = {
 /** Wide typing-slip bounds in the stored unit, per species module. Not reference values; never displayed as such. */
 const SANITY: Partial<Record<MeasureCode, Record<string, [number, number]>>> = {
   weight: {
-    dog: [0.1, 120], cat: [0.05, 15], rabbit: [0.05, 12], small_mammal: [0.005, 15], cage_bird: [0.005, 2.5], poultry: [0.1, 15],
+    dog: [0.1, 120], cat: [0.05, 15], rabbit: [0.05, 12], small_mammal: [0.005, 6], cage_bird: [0.005, 2.5], poultry: [0.1, 15],
     reptile: [0.001, 120], amphibian: [0.001, 2], aquarium_fish: [0.0005, 10], equine: [15, 1300], default: [0.001, 1500],
   },
   length: { default: [0.5, 400] },
