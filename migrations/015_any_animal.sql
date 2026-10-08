@@ -65,7 +65,7 @@ VALUES
   "additionalProperties": false,
   "properties": {
     "basking_temp_target_c": { "type": "integer", "minimum": 0, "maximum": 60 },
-    "uvb_lamp_changed_on": { "type": "string", "pattern": "^[0-9]{4 }-[0-9]{2 }-[0-9]{2 }$" }
+    "uvb_lamp_changed_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
   }
 }$reptile$::jsonb, 1,
    ARRAY['weight']::text[],
