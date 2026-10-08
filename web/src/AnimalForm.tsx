@@ -3,6 +3,7 @@
 import { Camera, ChevronDown } from 'lucide-react';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { ApiError, get, OTHER_ANIMAL, patch, post, type Animal, type SpeciesOption } from './api';
+import { AboutSheet } from './About';
 import { photoForUpload } from './photo';
 import { go } from './route';
 
@@ -22,6 +23,7 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
   const [name, setName] = useState(existing?.name ?? '');
   const [species, setSpecies] = useState(''); // a species name; chosen only when adding (an animal's species is fixed)
   const [otherName, setOtherName] = useState('');
+  const [aboutId, setAboutId] = useState<number | null>(null); // the About sheet over this form (D2 sec 8.1)
   const [options, setOptions] = useState<SpeciesOption[]>(FALLBACK);
   const [breed, setBreed] = useState(existing?.breed ?? '');
   const [born, setBorn] = useState(existing?.born ?? '');
@@ -51,6 +53,7 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
   }, [file]);
 
   const isOther = species === OTHER_ANIMAL;
+  const chosen = options.find((o) => o.name === species);
   const canSave = name.trim().length > 0 && (existing ? true : species !== '' && (!isOther || otherName.trim().length > 0)) && !busy;
 
   async function submit(e: FormEvent) {
@@ -111,10 +114,14 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
             </div>
           )}
           {options.length <= COMMON.length + 1 && <button type="button" className="btn mt-3" aria-pressed={isOther} onClick={() => setSpecies(OTHER_ANIMAL)}>Another kind of animal</button>}
+          {chosen?.has_about && chosen.id > 0 && (
+            <button type="button" className="mt-3 border-0 bg-transparent p-0 text-[14px] text-ink-2 underline" onClick={() => setAboutId(chosen.id)}>About {chosen.name}</button>
+          )}
           {isOther && (
             <div className="mt-3">
               <label htmlFor={`${ids}-kind`} className="mb-1.5 block text-[13px] text-ink-2">What kind of animal is it?</label>
-              <input id={`${ids}-kind`} className="field" value={otherName} onChange={(e) => setOtherName(e.target.value)} maxLength={80} autoComplete="off" placeholder="e.g. Tarantula" required />
+              <input id={`${ids}-kind`} className="field" value={otherName} onChange={(e) => setOtherName(e.target.value)} maxLength={80} autoComplete="off" placeholder="e.g. Tarantula" aria-describedby={`${ids}-kind-h`} required />
+              <p id={`${ids}-kind-h`} className="m-0 mt-1.5 text-[13px] text-ink-2">The kind of animal, not its name. If Petopia knows it (say “budgie”), it will use that kind.</p>
             </div>
           )}
         </div>
@@ -189,6 +196,7 @@ export function AnimalForm({ existing, onSaved }: { existing?: Animal; onSaved: 
         <button type="submit" className="btn btn-primary flex-1" disabled={!canSave}>{busy ? 'Saving…' : existing ? 'Save' : 'Add animal'}</button>
         <a href={existing ? `#/animals/${existing.id}` : '#/'} className="btn no-underline">Cancel</a>
       </div>
+      {aboutId !== null && <AboutSheet speciesId={aboutId} onClose={() => setAboutId(null)} />}
     </form>
   );
 }

@@ -4,12 +4,13 @@ import { sql } from 'kysely';
 import { requireOn, roleOn, setFirstOwner, allowedActions, type Role, type Action } from './access.js';
 import { ageOf, formatVagueDate, parseVagueDate, todayIso, type Age, type Precision } from './age.js';
 import { kdb, type Client } from './db.js';
-import { bad, notFound } from './errors.js';
+import { bad, conflict, invalid, notFound } from './errors.js';
 import { assertExt, type SpeciesModule } from './species.js';
 import { currentFoods, type FoodSummary } from './feeding.js';
 import { latestWeights, type LatestWeight } from './measurements.js';
 import { currentByAnimal, type CurrentMedicine } from './medications.js';
 import { checkContact } from './records.js';
+import { checkTypedKind, resolveKind, speciesById, speciesWithPages } from './about.js';
 import { processPhoto, storePhoto, type Processed } from './photos.js';
 
 const SEX = ['FEMALE', 'MALE', 'UNKNOWN'] as const;
@@ -20,6 +21,7 @@ const HEALTH = ['HEALTHY', 'UNDER_TREATMENT', 'NEEDS_ATTENTION'] as const;
 
 export interface AnimalView {
   id: number;
+  species_id: number;
   name: string;
   nickname: string | null;
   species: string;
@@ -125,7 +127,7 @@ async function resolveSpecies(c: Client, input: unknown): Promise<Resolved> {
 }
 
 /** What the "Add animal" picker offers: every pet species that has a module, in a stable, grouped order. */
-export async function listSpecies(c: Client): Promise<{ id: number; name: string; group: string; module: string }[]> {
+export async function listSpecies(c: Client): Promise<{ id: number; name: string; group: string; module: string; has_about: boolean }[]> {
   const rows = await kdb(c)
     .selectFrom('ref.species as s')
     .select(['s.species_id', 's.common_name', 's.group', 's.module_code'])
@@ -133,8 +135,9 @@ export async function listSpecies(c: Client): Promise<{ id: number; name: string
     .where('s.module_code', 'is not', null)
     .execute();
   const order = ['DOG', 'CAT', 'MAMMAL', 'BIRD', 'REPTILE', 'AMPHIBIAN', 'FISH', 'INSECT', 'OTHER'];
+  const pages = await speciesWithPages(c);
   return rows
-    .map((r) => ({ id: Number(r.species_id), name: r.common_name, group: r.group, module: r.module_code! }))
+    .map((r) => ({ id: Number(r.species_id), name: r.common_name, group: r.group, module: r.module_code!, has_about: pages.has(Number(r.species_id)) }))
     .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || (a.group === 'OTHER' ? 0 : a.name.localeCompare(b.name)));
 }
 
@@ -164,7 +167,7 @@ function baseQuery(c: Client) {
     .leftJoin('core.contact as v', 'v.contact_id', 'a.vet_contact_id')
     .leftJoin('core.contact as e', 'e.contact_id', 'a.emergency_contact_id')
     .select([
-      'a.animal_id', 'a.name', 'a.nickname', 's.common_name as species', 'a.module_code', 'a.breed', 'a.sex', 'a.neuter_status', 'a.colour_markings',
+      'a.animal_id', 'a.name', 'a.nickname', 'a.species_id', 's.common_name as species', 'a.module_code', 'a.breed', 'a.sex', 'a.neuter_status', 'a.colour_markings',
       'a.born_on', 'a.born_precision', 'a.acquired_on', 'a.acquired_precision', 'a.microchip', 'a.registration', 'a.source', 'h.name as habitat',
       'a.kind', 'a.status', 'a.status_on', 'a.health_status', 'a.ext', 'p.sha256',
       'v.contact_id as vet_id', 'v.name as vet_name', 'v.phone as vet_phone', 'e.contact_id as em_id', 'e.name as em_name', 'e.phone as em_phone',
@@ -188,7 +191,7 @@ function view(r: Row, role: Role, today: string, x: Extras): AnimalView {
   const bp = r.born_precision as Precision;
   const ap = r.acquired_precision as Precision;
   return {
-    id, name: r.name, nickname: r.nickname, species: speciesLabel(r), module: r.module_code, breed: r.breed,
+    id, species_id: Number(r.species_id), name: r.name, nickname: r.nickname, species: speciesLabel(r), module: r.module_code, breed: r.breed,
     sex: r.sex, neuter_status: r.neuter_status, colour_markings: r.colour_markings,
     born: formatVagueDate(r.born_on, bp), born_precision: bp, age: ageOf(r.born_on, bp, today),
     acquired: formatVagueDate(r.acquired_on, ap), acquired_precision: ap,
@@ -237,9 +240,12 @@ export async function createAnimal(c: Client, ws: number, member: string, b: New
   let given = b.ext ?? {};
   if (mod.common_name === OTHER_SPECIES) {
     // Someone who types a kind we already know ("Rabbit") gets that species, with its own fields, routines and limits.
+    // Name, alias, or the same minus one trailing "s" (D2 sec 3.4): "Budgie", "guinea-pig", "rabbits" all find their species.
     const typed = (given as { species_name?: unknown }).species_name;
     if (typeof typed === 'string' && typed.trim()) {
-      const known = await resolveSpecies(c, typed).catch(() => null);
+      const { text } = await checkTypedKind(c, typed);
+      const hit = await resolveKind(c, text);
+      const known = hit && hit.module_code && (hit.domain === 'PET' || hit.domain === 'BOTH') ? await resolveSpecies(c, hit.id).catch(() => null) : null;
       if (known && known.common_name !== OTHER_SPECIES) { mod = known; given = {}; }
     }
   }
@@ -305,12 +311,53 @@ export async function updateAnimal(c: Client, id: number, member: string, b: Rec
     const mod = await loadModule(c, cur.module_code);
     const checked = assertExt(mod, b.ext);
     const sp = await kdb(c).selectFrom('animal.animal as a').innerJoin('ref.species as s', 's.species_id', 'a.species_id').select('s.common_name').where('a.animal_id', '=', String(id)).executeTakeFirstOrThrow();
-    set.ext = JSON.stringify(checkKind(sp.common_name, checked));
+    const ext = checkKind(sp.common_name, checked);
+    set.ext = JSON.stringify(ext);
     set.ext_schema_version = mod.schema_version;
+    if (sp.common_name === OTHER_SPECIES && ext.species_name !== (cur.ext as { species_name?: unknown } | null)?.species_name) {
+      // Retyping the kind of an "Other animal" as a species we hold switches it (D2 sec 3.4), as adding it would have.
+      const { text } = await checkTypedKind(c, ext.species_name);
+      const hit = await resolveKind(c, text);
+      const target = hit && hit.module_code && (hit.domain === 'PET' || hit.domain === 'BOTH') ? await resolveSpecies(c, hit.id).catch(() => null) : null;
+      if (target && target.common_name !== OTHER_SPECIES) {
+        set.species_id = target.species_id; set.module_code = target.code; set.ext = JSON.stringify({}); set.ext_schema_version = target.schema_version;
+      }
+    }
   }
   if (Object.keys(set).length) {
     await kdb(c).updateTable('animal.animal').set({ ...set, updated_at: new Date().toISOString() }).where('animal_id', '=', String(id)).execute();
   }
+  return getAnimal(c, id, member, today);
+}
+
+/**
+ * POST animals/:id/species (D2 sec 3.5): switch ONE animal that is currently "Other animal" to a pet species we hold, because the
+ * person (or Claude's candidate, slice A3) turned out to mean it. \`species\` is a numeric id or a name / alias. Order of refusals:
+ * 403 (role), 404 (no such animal), 409 (not "Other animal"), 404 (no such species), 422 (not a pet species). Slice A3 adds the
+ * deletion of the household's unused draft row for the old typed kind.
+ */
+export async function switchSpecies(c: Client, id: number, member: string, speciesInput: unknown, today = todayIso()): Promise<AnimalView> {
+  await requireOn(c, id, member, 'EDIT_PROFILE');
+  const cur = one(await kdb(c).selectFrom('animal.animal as a').innerJoin('ref.species as s', 's.species_id', 'a.species_id').select(['s.common_name', 's.species_id']).where('a.animal_id', '=', String(id)).executeTakeFirst(), 'no such animal');
+  if (cur.common_name !== OTHER_SPECIES) throw conflict('that animal already has a kind; only an "Other animal" can be switched');
+  if (typeof speciesInput !== 'string' && typeof speciesInput !== 'number') throw bad('species is required');
+  const asId = typeof speciesInput === 'number' ? speciesInput : /^\d+$/.test(speciesInput.trim()) ? Number(speciesInput.trim()) : null;
+  let sp = null;
+  if (asId !== null) {
+    if (!Number.isSafeInteger(asId) || asId < 1) throw bad('species must be a species id or a name');
+    sp = await speciesById(c, asId);
+  } else {
+    const { text } = await checkTypedKind(c, speciesInput);
+    sp = await resolveKind(c, text);
+  }
+  if (!sp) throw notFound('Petopia does not know that kind of animal');
+  if (!sp.module_code || (sp.domain !== 'PET' && sp.domain !== 'BOTH') || sp.common_name === OTHER_SPECIES) throw invalid('only a pet species can be chosen here');
+  const target = await resolveSpecies(c, sp.id);
+  // Guarded by the species we read above: if another request switched this animal first, nothing changes here and we say so.
+  const done = await kdb(c).updateTable('animal.animal')
+    .set({ species_id: target.species_id, module_code: target.code, ext: JSON.stringify({}), ext_schema_version: target.schema_version, updated_at: new Date().toISOString() })
+    .where('animal_id', '=', String(id)).where('species_id', '=', cur.species_id).executeTakeFirst();
+  if (Number(done.numUpdatedRows) === 0) throw conflict('that animal already has a kind; only an "Other animal" can be switched');
   return getAnimal(c, id, member, today);
 }
 

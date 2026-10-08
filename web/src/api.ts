@@ -48,6 +48,8 @@ export function photoUrl(path: string): Promise<string> {
 export interface Age { years: number; months: number; text: string; approximate: boolean }
 export interface Animal {
   id: number;
+  species_id: number;
+  ext?: Record<string, unknown>;
   name: string;
   nickname: string | null;
   species: string;
@@ -75,7 +77,7 @@ export interface Animal {
   can: string[];
 }
 export interface Me { member: string; household: { id: number } | null; admin?: boolean }
-export interface SpeciesOption { id: number; name: string; group: string; module: string }
+export interface SpeciesOption { id: number; name: string; group: string; module: string; has_about?: boolean }
 export const OTHER_ANIMAL = 'Other animal';
 export type NewAnimal = { name: string; species: string; ext?: Record<string, unknown>; breed?: string; born?: string; sex?: string; neuter_status?: string; colour_markings?: string; microchip?: string };
 
@@ -152,3 +154,17 @@ export interface Household {
   habitats: { id: number; name: string; kind: string; parent_id: number | null }[];
   contacts: Contact[];
 }
+
+// ---- D2 About pages (engine/src/about.ts) ----
+export interface AboutSource { title: string; publisher: string; url: string; checked_on: string }
+export interface AboutStatement { text: string; withheld: boolean }
+export type SpeciesAbout =
+  | { state: 'NONE' }
+  | {
+      state: 'PAGE';
+      species: { id: number; common_name: string; scientific_name: string | null; domain: string };
+      version: number; checked_on: string; written_by: string; reviewed_by: string | null; source_count: number;
+      headings: Record<string, string>;
+      sections: Record<string, { statements: AboutStatement[]; sources: AboutSource[] }>;
+    };
+export interface AboutKind { tier: 'SPECIES' | 'NONE'; species?: { id: number; common_name: string; domain: string; has_page: boolean }; wild?: boolean; can_write: boolean }

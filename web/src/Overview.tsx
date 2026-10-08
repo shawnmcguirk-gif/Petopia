@@ -8,6 +8,7 @@ import { AnimalPhoto } from './AnimalPhoto';
 import { StatusChip } from './AnimalCard';
 import { clearNotice, peekNotice } from './AnimalForm';
 import { photoForUpload } from './photo';
+import { AboutCard } from './About';
 import { Glance } from './Glance';
 import { NEUTER_WORDS, SEX_WORDS, summaryLine } from './words';
 
@@ -74,9 +75,11 @@ export function Overview({ a, onChange }: { a: Animal; onChange: (a: Animal) => 
 
       <Glance a={a} onChange={onChange} />
 
+      <AboutCard a={a} />
+
       {known.length > 0 && (
-        <section aria-labelledby="about" className="mt-8">
-          <h3 id="about" className="m-0 mb-3 text-[13px] font-semibold uppercase tracking-[.08em] text-ink-2">About</h3>
+        <section aria-labelledby="details" className="mt-8">
+          <h3 id="details" className="m-0 mb-3 text-[13px] font-semibold uppercase tracking-[.08em] text-ink-2">Details</h3>
           <dl className="m-0 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
             {known.map(([k, v]) => (
               <div key={k} className="flex justify-between gap-4 px-4 py-3.5">

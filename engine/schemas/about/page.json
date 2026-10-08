@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "petopia/about/page/1",
+  "title": "A researched About page (Petopia D2 sec 9.1, Appendix B.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["species", "checked_on", "written_by", "sections"],
+  "properties": {
+    "species": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "checked_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "written_by": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": { "$ref": "#/definitions/summarySection" },
+        "characteristics": { "$ref": "#/definitions/section" },
+        "habits": { "$ref": "#/definitions/section" },
+        "diet": { "$ref": "#/definitions/section" },
+        "housing": { "$ref": "#/definitions/section" },
+        "lifespan": { "$ref": "#/definitions/section" },
+        "breeding": { "$ref": "#/definitions/section" },
+        "health": { "$ref": "#/definitions/section" },
+        "care_notes": { "$ref": "#/definitions/section" }
+      }
+    }
+  },
+  "definitions": {
+    "statement": { "type": "string", "minLength": 10, "maxLength": 240 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "publisher", "url", "checked_on"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 500 },
+        "checked_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statements", "sources"],
+      "properties": {
+        "statements": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/definitions/statement" } },
+        "sources": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/definitions/source" } }
+      }
+    },
+    "summarySection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statements", "sources"],
+      "properties": {
+        "statements": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/definitions/statement" } },
+        "sources": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/definitions/source" } }
+      }
+    }
+  }
+}

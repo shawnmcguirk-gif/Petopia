@@ -15,7 +15,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { canAny, ensureAdminGrant, householdOf, isAdmin, managesAny, requireHousehold, requireOn, type Action } from './access.js';
-import { createAnimal, getAnimal, listAnimals, listSpecies, mediaVisible, preparePhoto, setProfilePhoto, updateAnimal, type NewAnimal } from './animals.js';
+import { aboutKind, getSpeciesPage } from './about.js';
+import { createAnimal, getAnimal, listAnimals, listSpecies, mediaVisible, preparePhoto, setProfilePhoto, switchSpecies, updateAnimal, type NewAnimal } from './animals.js';
 import { authOff, authorise, isProduction } from './auth.js';
 import { addAppointment, addRoutine, agenda, careOf, changeAppointment, logCare, rememberMember, retireRoutine, syncAppointment } from './care.js';
 import { addContact, listContacts } from './contacts.js';
@@ -113,9 +114,12 @@ export const ROUTES: Route[] = [
 
   // ---- animals
   { method: 'GET', path: re('species'), guard: H, handle: async (x) => [200, await x.r((c) => listSpecies(c))] },
+  { method: 'GET', path: re('about/species/:id'), guard: H, handle: async (x) => [200, await x.r((c) => getSpeciesPage(c, n(x, 1)))] },
+  { method: 'GET', path: re('about/kind'), guard: H, handle: async (x) => [200, await x.r((c) => aboutKind(c, x.member, x.q('name')))] },
   { method: 'GET', path: re('animals'), guard: H, handle: async (x) => [200, await x.r((c) => listAnimals(c, x.member))] },
   { method: 'POST', path: re('animals'), guard: ANY('ADD_MEDIA'), handle: async (x) => { const b = (await x.body()) as NewAnimal; return [201, await x.w((c) => createAnimal(c, x.ws, x.member, b))]; } },
   { method: 'GET', path: re('animals/:id'), guard: A('VIEW'), handle: async (x) => [200, await x.r((c) => getAnimal(c, n(x, 1), x.member))] },
+  { method: 'POST', path: re('animals/:id/species'), guard: A('EDIT_PROFILE'), handle: async (x) => { const b = await x.body(); return [200, await x.w((c) => switchSpecies(c, n(x, 1), x.member, b.species))]; } },
   { method: 'PATCH', path: re('animals/:id'), guard: A('EDIT_PROFILE'), handle: async (x) => { const b = await x.body(); return [200, await x.w((c) => updateAnimal(c, n(x, 1), x.member, b))]; } },
   {
     method: 'POST', path: re('animals/:id/photo'), guard: A('ADD_MEDIA'), handle: async (x) => {

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 export const TABS = ['overview', 'timeline', 'health', 'care'] as const;
 export type Tab = (typeof TABS)[number];
-export type Route = { name: 'home' } | { name: 'add' } | { name: 'animals' } | { name: 'inbox' } | { name: 'inbox-item'; id: number } | { name: 'household' } | { name: 'animal'; id: number; tab: Tab } | { name: 'edit'; id: number };
+export type Route = { name: 'home' } | { name: 'add' } | { name: 'animals' } | { name: 'inbox' } | { name: 'inbox-item'; id: number } | { name: 'household' } | { name: 'animal'; id: number; tab: Tab } | { name: 'edit'; id: number } | { name: 'about'; species: number };
 
 export function parseRoute(hash: string): Route {
   const h = hash.replace(/^#/, '');
@@ -11,6 +11,8 @@ export function parseRoute(hash: string): Route {
   if (m) return { name: 'edit', id: Number(m[1]) };
   m = /^\/animals\/(\d+)(?:\/([a-z]+))?$/.exec(h);
   if (m) return { name: 'animal', id: Number(m[1]), tab: (TABS as readonly string[]).includes(m[2] ?? '') ? (m[2] as Tab) : 'overview' };
+  m = /^\/about\/species\/(\d+)$/.exec(h);
+  if (m) return { name: 'about', species: Number(m[1]) };
   if (h === '/add') return { name: 'add' };
   if (h === '/animals') return { name: 'animals' };
   if (h === '/inbox') return { name: 'inbox' };

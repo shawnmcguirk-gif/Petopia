@@ -13,7 +13,7 @@ import { parseRoute } from './route';
 import { dueWords, scheduleWords } from './words';
 
 const biscuit: Animal = {
-  id: 7, name: 'Biscuit', nickname: null, species: 'Cat', module: 'cat', breed: 'Domestic shorthair', sex: 'UNKNOWN', neuter_status: 'UNKNOWN',
+  id: 7, species_id: 2, name: 'Biscuit', nickname: null, species: 'Cat', module: 'cat', breed: 'Domestic shorthair', sex: 'UNKNOWN', neuter_status: 'UNKNOWN',
   colour_markings: null, born: '2018', born_precision: 'YEAR', age: { years: 8, months: 0, text: 'about 8 years', approximate: true }, acquired: null,
   microchip: null, habitat: 'Home', kind: 'PET', status: 'ACTIVE', health_status: null, latest_weight: null, current_food: null, current_medication: [],
   vet: null, emergency_contact: null, photo: null, my_role: 'OWNER',

@@ -3,6 +3,7 @@
 // the engine; who may do what is decided there and only reflected here.
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, get, type Animal, type Me, type Today } from './api';
+import { AboutPage } from './About';
 import { AnimalsScreen } from './Animals';
 import { HouseholdScreen } from './Household';
 import { InboxScreen } from './Inbox';
@@ -71,6 +72,7 @@ export function App() {
   const animals = load.animals;
   const changed = () => { void refreshAgenda(); };
   if (route.name === 'add') return <><TopBar title="Add an animal" /><AnimalForm onSaved={put} />{nav}</>;
+  if (route.name === 'about') return <><TopBar title="About" back="#/animals" /><AboutPage speciesId={route.species} />{nav}</>;
   if (route.name === 'animals') return <><TopBar title="Animals" /><AnimalsScreen animals={animals} />{nav}</>;
   if (route.name === 'inbox') return <><TopBar title="Inbox" /><InboxScreen animals={animals} onChanged={changed} />{nav}</>;
   if (route.name === 'inbox-item') return <><TopBar title="Check a document" back="#/inbox" /><InboxItemPage id={route.id} animals={animals} onChanged={() => { changed(); void refresh(); }} />{nav}</>;

@@ -115,7 +115,7 @@ is edited after it has run anywhere: a fix is a new migration with explicit stat
 `ref.normalise_kind(text) RETURNS text`, `IMMUTABLE`, created in 017. The engine always calls it (`SELECT ref.normalise_kind($1)`);
 there is no second copy in TypeScript, so the two cannot drift. Steps, in order: replace every whitespace or control character (`[[:space:][:cntrl:]]`, so tabs and newlines) with a space; `normalize(x, NFKC)`; `lower()`; replace each of `-`
 `_` `/` with a space; delete every character that is not a letter, a digit or a space (`[^[:alnum:] ]`); collapse runs of spaces to
-one; trim. The function needs Postgres 13 or later and a database with encoding UTF8; the non-ASCII row below also needs a `lc_ctype` that is not `C`. A1's first step runs `SELECT version()`, `SHOW server_encoding` and `SHOW lc_ctype` on the iMac and records them in the A1 review file. If Postgres is older than 13 or the encoding is not UTF8, A1 stops and asks Ryan (there is no fallback implementation); if `lc_ctype` is `C`, the `Écureuil` test row is dropped and noted.
+one; trim. The function needs Postgres 13 or later and a database with encoding UTF8; the non-ASCII row below also needs a `lc_ctype` that is not `C`. A1's first step runs `SELECT version()`, `SHOW server_encoding` and `SELECT datctype FROM pg_database WHERE datname = current_database()` on the iMac and records them in the A1 review file. **Recorded 2026-10-08 (A1): PostgreSQL 16.14, `server_encoding` UTF8, `datcollate`/`datctype` `en_US.utf8` for both `petopia` and `petopia_test`.** (`SHOW lc_ctype` is not a Postgres setting, which is why the query reads `pg_database`.) If Postgres is older than 13 or the encoding is not UTF8, A1 stops and asks Ryan (there is no fallback implementation); if `lc_ctype` is `C`, the `Écureuil` test row is dropped and noted.
 
 | Input | Output |
 |---|---|
@@ -261,16 +261,18 @@ The `kind_about_ready` constraint says: a READY row has `sections`, no failure, 
 ### 3.4 Which page does a typed kind get? (lookup order)
 
 The same lookup is used by `createAnimal`, `updateAnimal` (when the typed kind is edited), `GET about/kind` and `POST about/kinds`.
-Input: a typed kind. It never looks at the placeholder species "Other animal" (`module_code = 'other'`): typing "other animal" gets
-no match and goes through the draft flow like any unknown kind.
+Input: a typed kind. It never looks at the placeholder species "Other animal", identified **by name** (Goat, Sheep and Pig also use the module
+`other`, so the module cannot tell them apart): typing "other animal" gets no match and goes through the draft flow like any unknown kind.
+The whole lookup is one SQL function, `ref.resolve_kind(typed)`, which the engine calls; there is no second copy in TypeScript.
 
 1. `n = ref.normalise_kind(typed)`. Empty: 400. The trimmed typed string must be at most 80 characters and `n` at most 80 (NFKC can
    lengthen a string): else 400.
 2. Try, in this order, and stop at the first step that finds exactly one species: (a) `n` equals the normalised `common_name`; (b)
    `n` equals an alias; (c) `n` minus one trailing `s` (sec 3.1) equals the normalised `common_name`; (d) the same minus-`s` form equals
-   an alias. (a) is unique by `uq_species_normalised`, (b) by the alias primary key; (c) and (d) can find two species only if a
-   stripped form collides, in which case the step is skipped as "no match" and a warning is logged. Names beat aliases because they
-   come first.
+   an alias. Each step finds at most one species: normalised names are unique (`uq_species_normalised`) and so are aliases (primary
+   key), so there is no "two species" case and no warning to log (corrected in A1; draft 3 said otherwise). The function still
+   treats any count other than one as "no match". Names beat aliases because they come first. A word of three characters or fewer,
+   or one ending in "ss", is never stripped, and "torpedoes" strips to "torpedoe", which is why the file lists it as an alias.
 3. Result:
    - the species is **PET or BOTH with a module** (`module_code` not null): `createAnimal`/`updateAnimal` save the animal as that species,
      `species_name` cleared, exactly as 016 does for an exact name today (its module, `ext_schema_version`; the care suggestions,
@@ -767,7 +769,7 @@ Ticked per slice in the pass that ships it. "Proved on the iMac" is recorded as 
 `kind_about_run` row ids and outcomes it produced.
 
 **A1**
-- [ ] First step recorded in the A1 review file: `SELECT version()`, `SHOW server_encoding`, `SHOW lc_ctype` (Appendix A).
+- [ ] First step recorded in the A1 review file: `SELECT version()`, `SHOW server_encoding`, `SELECT datctype FROM pg_database WHERE datname = current_database()` (Appendix A).
 - [ ] DB tests on a fresh `petopia_test`: `ref.normalise_kind` returns the sec 3.1 table for every row; `uq_species_normalised` refuses two species that normalise equal; `ref.species_alias` CHECK refuses an un-normalised alias; `alias_clash` triggers fire both ways; no alias in the seed equals another species' name.
 - [ ] A fixture page loads; loading it again changes nothing (`UNCHANGED`); a changed file makes version 2 and retires version 1 in one transaction; a second live row for a species is impossible.
 - [ ] Inserting into `ref.species_about` or `ref.species_alias` without `petopia.loader` fails; the string `petopia.loader` is absent from `engine/src/`.

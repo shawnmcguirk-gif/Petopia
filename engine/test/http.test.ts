@@ -38,6 +38,7 @@ describe('http', () => {
       ['POST', '/api/animals/1/photo'], ['GET', '/api/animals/1/measurements'], ['POST', '/api/animals/1/measurements'], ['GET', '/api/animals/1/feeding'],
       ['POST', '/api/animals/1/feeding'], ['GET', '/api/animals/1/health'], ['GET', '/api/animals/1/timeline'], ['POST', '/api/animals/1/records/vaccination'],
       ['POST', '/api/animals/1/records/vaccination/1/confirm'], ['POST', '/api/animals/1/medications'], ['POST', '/api/animals/1/medications/1/events'],
+      ['GET', '/api/about/species/1'], ['GET', '/api/about/kind?name=Robin'], ['POST', '/api/animals/1/species'],
       ['GET', '/api/contacts'], ['POST', '/api/contacts'], ['GET', '/api/habitats'], ['GET', `/api/media/${'a'.repeat(64)}.jpg`], ['GET', '/api/nope']] as const) {
       const r = await fetch(`${base}${p}`, { method: m });
       expect(r.status, `${m} ${p}`).toBe(401);
