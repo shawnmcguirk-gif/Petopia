@@ -26,7 +26,13 @@ Ryan, 2026-10-08: "the app needs to support any type of animal not just cats and
 
 **Design (assumptions, flagged to Ryan):** migration 015 adds `ref.species.module_code` (many species -> one module), seeds ~30 pet species under modules small_mammal, cage_bird, reptile, aquarium_fish, equine, poultry, plus generic `other` (ext.species_name required, per-animal, so no household text lands in shared ref data). `GET /api/species` feeds the picker. create accepts a species id/name or the old `dog`/`cat` codes.
 
-**RESUME HERE:** build per the above, in this order: 015 + schemas + tests, engine moduleOf + route, web picker, deploy via runner, independent review. Progress is logged below as it lands.
+**Ryan's list (2026-10-08, mid-build):** robins, collared doves, blackbirds, sparrows, starlings, pigeons, wood pigeons, bala shark, angelfish, tiger barbs, "torpedoes" (assumed torpedo barb -- NOT confirmed), Shih Tzus, foxes, frogs, squirrels, cats, "different types of tits", bullfinch, thrushes, sparrowhawk. Fish -> pet species (aquarium_fish). Birds/fox/squirrel/frog -> `ref.species` domain WILD, no module, NOT offered in Add animal (wildlife is v2: sightings/Named Visitors). Added tree sparrow, redwing, red squirrel as Irish neighbours (assumption).
+
+**Built + deployed (main ddb0b6e):** migration 015 (ref.species.module_code; 8 modules small_mammal/cage_bird/poultry/reptile/amphibian/aquarium_fish/equine/other; 43 pet species + 21 wild), `GET /api/species`, species resolved by id/name/old code, "Other animal" requires `ext.species_name` (shown as the species; stays on the animal, never in ref), inbox matchAnimal matches by whole word incl. the typed name, web picker (Dog/Cat buttons + grouped list + "Something else"), tests (7 DB + 4 web + schema drift). Backup: `~/.petopia-backups/petopia-pre-015.sql`. Test run on iMac 179/179 engine, 41/41 web. **One flake seen:** during the deploy run 3 `inbox.db.test.ts` withdrawal tests failed once (the batch's `|| true` hid it and deployment continued); they passed in the 3 runs + full suite right after and in both runs before. Cause not found -- treat as an intermittent race until shown otherwise.
+
+**Follow-up commit (local until deployed):** "Other animal" can no longer lose its name via PATCH ext (found by the author while re-reading; test added).
+
+**RESUME HERE:** (1) independent review of 689129a..HEAD (author is not reviewer) -- result goes in `docs/reviews/2026-10-08-any-animal-review.md`; (2) deploy the PATCH fix + any review fixes via the runner; (3) ask Ryan: phone check -- Add animal shows Dog/Cat + the list; Q: torpedo barb right? want wild visitors addable as animals before v2? (4) the case-insensitive PETOPIA_ADMINS fix is still owed from the 18:30 entry below. (5) D1 still reads deploy; Ryan has not said `ready`/`verified`.
 
 ## 2026-10-07 18:30 IST -- tile bug fixed (Cowork/Sonnet 5.5, Ryan's session)
 

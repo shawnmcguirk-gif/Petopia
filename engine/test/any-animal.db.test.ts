@@ -85,6 +85,16 @@ describe.skipIf(!URL_)('any kind of animal (015)', () => {
     expect((await withTxn(W, true, (c) => getAnimal(c, r.id, me, T))).ext).toEqual({ housing: 'INDOOR' });
   });
 
+  it('"Other animal" cannot lose its name later: an edit that blanks or removes it is refused, a rename is trimmed', async () => {
+    const t = await add({ name: 'Webster', species: 'Other animal', ext: { species_name: 'Tarantula' } });
+    await expect(withTxn(W, false, (c) => updateAnimal(c, t.id, me, { ext: {} }, T))).rejects.toMatchObject({ status: 400 });
+    await expect(withTxn(W, false, (c) => updateAnimal(c, t.id, me, { ext: { species_name: '  ' } }, T))).rejects.toMatchObject({ status: 400 });
+    const u = await withTxn(W, false, (c) => updateAnimal(c, t.id, me, { ext: { species_name: ' Huntsman spider ' } }, T));
+    expect(u).toMatchObject({ species: 'Huntsman spider', ext: { species_name: 'Huntsman spider' } });
+    const g = await add({ name: 'Heidi2', species: 'Goat' }); // a species with its own row may have an empty ext
+    expect((await withTxn(W, false, (c) => updateAnimal(c, g.id, me, { ext: {} }, T))).species).toBe('Goat');
+  });
+
   it('a printed document finds the right animal by name + the species it names, even for "Other animal"', async () => {
     const m = (name: string, species: string | null) => withTxn(W, true, (c) => matchAnimal(c, { name, species, microchip: null }));
     const bun = await add({ name: 'Biscuit', species: 'Rabbit' });

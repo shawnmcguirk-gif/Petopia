@@ -136,6 +136,13 @@ export async function listSpecies(c: Client): Promise<{ id: number; name: string
     .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || (a.group === 'OTHER' ? 0 : a.name.localeCompare(b.name)));
 }
 
+/** "Other animal" must say what it is, on creation and on every later edit of its details. Returns the ext to store. */
+function withKind(ext: Record<string, unknown>): Record<string, unknown> {
+  const kind = typeof ext.species_name === 'string' ? ext.species_name.trim() : '';
+  if (!kind) throw bad('say what kind of animal it is (for example "Tarantula")');
+  return { ...ext, species_name: kind };
+}
+
 /** The generic "Other animal" species carries the person's own words for what it is. */
 export const OTHER_SPECIES = 'Other animal';
 
@@ -218,12 +225,8 @@ export async function createAnimal(c: Client, ws: number, member: string, b: New
   const name = str(b.name, 'name', 80);
   if (!name) throw bad('name is required');
   const mod = await resolveSpecies(c, b.species);
-  const ext = assertExt(mod, b.ext ?? {});
-  if (mod.common_name === OTHER_SPECIES) {
-    const kind = typeof ext.species_name === 'string' ? ext.species_name.trim() : '';
-    if (!kind) throw bad('say what kind of animal it is (for example "Tarantula")');
-    ext.species_name = kind;
-  }
+  const checked = assertExt(mod, b.ext ?? {});
+  const ext = mod.common_name === OTHER_SPECIES ? withKind(checked) : checked;
   const born = vague(b.born, 'born');
   const acquired = vague(b.acquired, 'acquired');
   const home = await kdb(c).selectFrom('core.habitat').select('habitat_id').where('kind', '=', 'HOME').where('retired_at', 'is', null).orderBy('habitat_id').executeTakeFirst();
@@ -283,7 +286,9 @@ export async function updateAnimal(c: Client, id: number, member: string, b: Rec
   }
   if ('ext' in b) {
     const mod = await loadModule(c, cur.module_code);
-    set.ext = JSON.stringify(assertExt(mod, b.ext));
+    const checked = assertExt(mod, b.ext);
+    const sp = await kdb(c).selectFrom('animal.animal as a').innerJoin('ref.species as s', 's.species_id', 'a.species_id').select('s.common_name').where('a.animal_id', '=', String(id)).executeTakeFirstOrThrow();
+    set.ext = JSON.stringify(sp.common_name === OTHER_SPECIES ? withKind(checked) : checked);
     set.ext_schema_version = mod.schema_version;
   }
   if (Object.keys(set).length) {
