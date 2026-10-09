@@ -35,3 +35,15 @@ same session it moved, dated (CONVENTIONS.md §§2, 6).
 This file is a stub scaffold — extend it with this project's own real
 conventions as they emerge, the way Agentle's `CLAUDE.md` grew from a
 similar starting point.
+
+### Two sessions at once, and going live (CONVENTIONS sec 38)
+
+Two sessions may work here at once. Follow CONVENTIONS sec 38: say which piece of work you're on
+(D-number, or quick fix); commit only your own files, by name, with the D-number (or `quick:`) in
+the commit subject; add handoff entries only at the top, re-reading first; and before any deploy,
+show the person every app commit since the last live one that isn't yours, and ask whether any other
+session is working here right now or stopped partway through.
+
+**Live is served straight from this folder:** the engine on the iMac serves `web/dist` from
+here, so a web build is live at once. There is no deploy job yet: build only from a clean worktree
+of your own commit, by hand, after the check above.
