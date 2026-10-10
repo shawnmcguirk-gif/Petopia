@@ -8,7 +8,7 @@ handoff: HANDOFF.md
 pipeline: HANDOFF.md          # file containing the "## Pipeline State" table
 design: DESIGN.md             # decision log
 kit: /Users/shawnmcguirk/dev/Axiom/kit/pipeline-kit.mjs
-conventions_version: 36         # 2026-10-09 -- synced v35 -> v36 against kit/CONVENTIONS.md (sec 38: two sessions in one project; sec 39: Progress panel at session start, sec 1 step 0 -- Ryan). History: git log of this line.
+conventions_version: 37         # 2026-10-10 -- synced v36 -> v37 against kit/CONVENTIONS.md (sec 40: cite a D-number by its title first, number in brackets -- Ryan). History: git log of this line.
 scaffold_version: 3             # Axiom D51 sec 7 -- scaffold drift baseline; kit/templates/SCAFFOLD-VERSION is canonical, bump when re-scaffolded/re-adopted
 capabilities:                 # free-text declarations; absence is a fact, not an error (D41 §14)
   - pipeline_state
