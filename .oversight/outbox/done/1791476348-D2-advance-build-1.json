@@ -1,0 +1,25 @@
+{
+  "event": "stage",
+  "session": "Cloud/Sonnet 5.5, Ryan's account",
+  "actor_type": "human",
+  "attested_by_session": true,
+  "project": "petopia",
+  "target": {
+    "d_number": "D2"
+  },
+  "payload": {
+    "op": "set",
+    "stage": "gate:spec",
+    "from": {
+      "next": "spec",
+      "terminal": null
+    },
+    "note": "ryan said 'build', which finishes the spec stage and approves it; this marks it finished first (kit advance build).",
+    "approver": "ryan",
+    "via": "kit advance",
+    "attestation": {
+      "quote": "build"
+    }
+  },
+  "at": "2026-10-08T16:19:07Z"
+}

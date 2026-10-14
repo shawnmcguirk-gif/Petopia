@@ -1,0 +1,1 @@
+{"id":"session-end","event":"session-end","session":"cowork/sonnet-5.5/ryan","note":"Fixed Synapse SW denylist for /petopia/ (7127ce5) and PETOPIA_ADMINS case (shawn,ryan). D1 at deploy, awaiting Ryan ready/verified.","at":"2026-10-07T20:19:41Z"}
